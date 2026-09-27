@@ -4,6 +4,9 @@
   "description": "Unofficial companion for the Doki Theme: flip your animated wallpaper through a folder of GIFs, show it behind the side bars, panel and terminal, and turn .mp4 videos into GIF wallpapers.",
   "version": "1.0.0",
   "publisher": "MidSix",
+  "author": {
+    "name": "Sebastián David Moreno Expósito"
+  },
   "license": "MIT",
   "icon": "media/icon.png",
   "galleryBanner": {
