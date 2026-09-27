@@ -82,3 +82,6 @@ button:disabled { opacity: .5; cursor: progress; }
 .task-note[hidden] { display: none; }
 
 .range-hints { display: flex; justify-content: space-between; font-size: 0.85em; margin-top: -4px; }
+
+/* See the wheel handling in sidebar.js: the list lets the page scroll past it. */
+body.page-scrolling #list { pointer-events: none; }

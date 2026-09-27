@@ -5,7 +5,7 @@ Keep a folder of animated GIF wallpapers and flip through them with two arrows, 
 
 ![Browsing the panel and applying a wallpaper](images/hero.gif)
 
-<sub>Waiting times (Doki installing the image and the window reopening) are sped up in the animations.</sub>
+<sub>The animations on this page are encoded at 5 frames per second so they load quickly, which is why they look choppy; the extension itself runs smoothly. Waiting times (Doki installing the image, the window reopening, a conversion running) are also sped up.</sub>
 
 > Doki Theme does all the heavy lifting: it draws the wallpaper. This extension only tells Doki *which* image to use and adjusts a few VS Code colors so the wallpaper can show through. It contains no Doki Theme code and is not affiliated with the Doki Theme project.
 
@@ -30,7 +30,7 @@ Sort the folder by **name** (numbers sorted naturally), **date modified**, **dat
 
 <img src="images/panel.png" alt="The Wallpaper Carousel panel, previewing a wallpaper on hover" width="300">
 
-- Preview of the current wallpaper and an `n / N` counter.
+- A preview of the current wallpaper and an `n / N` counter. The preview is a still frame, not the animated GIF, so the panel stays light even with 100 MB wallpapers.
 - A filterable list: click a name to apply it. The list shows 12 rows and scrolls, so it stays usable with hundreds of wallpapers.
 - **Instant hover previews**: hovering a name shows a still frame from the middle of that GIF. Previews are generated once in the background with ffmpeg and cached, so hovering never has to decode a 100 MB animated GIF. Dimmed wallpapers (GIFs blended with a dark background so code stays readable) are **brightened in the preview only**, so you can still tell them apart; the GIF itself is never changed.
 
@@ -64,7 +64,11 @@ Conversion calls ffmpeg directly (a high-quality two-pass palette), works the sa
 
 Videos whose GIF **already exists** in the destination are skipped, so existing GIFs are never re-rendered or overwritten. Each GIF is rendered in a temporary folder and only moved into place once it is complete, so a cancelled conversion never leaves a half-written GIF behind.
 
-<!-- TODO: images/convert.gif -->
+![Converting a video to a GIF wallpaper](images/convert.gif)
+
+The new GIF shows up in the list right away, ready to apply:
+
+![Finding the new GIF and applying it](images/convert-apply.gif)
 
 ### 📦 Collect scattered videos into one folder
 

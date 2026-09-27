@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { Carousel } from "./carousel";
 import { applyWallpaper, currentTask, getCurrentDokiPath, isSwitching, onDidChangeSwitching, onDidChangeTask } from "./doki";
+import { samePath } from "./platform";
 import { Thumbnails } from "./thumbnails";
 import { ConvertOptions, convertMp4, defaultConvertOptions, extractMp4 } from "./tools";
 
@@ -29,9 +30,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     carousel.onDidChange(() => this.postState());
     onDidChangeSwitching((busy) => this.view?.webview.postMessage({ type: "busy", busy }));
     onDidChangeTask((task) => this.view?.webview.postMessage({ type: "task", task: task ?? "" }));
-    thumbnails.onDidCreate(({ file, thumb }) =>
-      this.view?.webview.postMessage({ type: "thumb", path: file, thumb: this.view.webview.asWebviewUri(vscode.Uri.file(thumb)).toString() })
-    );
+    thumbnails.onDidCreate(({ file, thumb }) => {
+      if (!this.view) return;
+      const uri = this.view.webview.asWebviewUri(vscode.Uri.file(thumb)).toString();
+      this.view.webview.postMessage({ type: "thumb", path: file, thumb: uri });
+      const current = getCurrentDokiPath();
+      if (current && samePath(file, current)) this.view.webview.postMessage({ type: "currentThumb", thumb: uri });
+    });
   }
 
   resolveWebviewView(view: vscode.WebviewView) {
@@ -71,7 +76,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }),
       currentIndex: this.carousel.currentIndex(),
       current: current ?? "",
-      currentUri: current && fs.existsSync(current) ? webview.asWebviewUri(vscode.Uri.file(current)).toString() : "",
+      currentUri: this.previewUri(webview, current),
       sortBy: cfg.get("sortBy"),
       sortOrder: cfg.get("sortOrder"),
       includeSubfolders: cfg.get("includeSubfolders"),
@@ -88,7 +93,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       extractSource: this.context.globalState.get<string>(EXTRACT_SOURCE_KEY, ""),
       extractDestination: this.context.globalState.get<string>(EXTRACT_DEST_KEY, folder ? path.join(folder, "mp4") : ""),
     });
-    this.thumbnails.request(files.map((f) => f.path));
+    // The current wallpaper first, so the preview at the top is ready before the hover previews.
+    this.thumbnails.request([...(current ? [current] : []), ...files.map((f) => f.path)]);
+  }
+
+  /**
+   * Preview of the current wallpaper: its cached still frame, never the animated file. A large GIF
+   * playing in the panel keeps decoding frames and can take hundreds of MB, which made the panel lag.
+   */
+  private previewUri(webview: vscode.Webview, file: string | undefined): string {
+    if (!file || !fs.existsSync(file)) return "";
+    const thumb = this.thumbnails.get(file);
+    if (thumb) return webview.asWebviewUri(vscode.Uri.file(thumb)).toString();
+    // Still images are cheap to show as they are; a GIF waits for its thumbnail.
+    if (path.extname(file).toLowerCase() !== ".gif") return webview.asWebviewUri(vscode.Uri.file(file)).toString();
+    return "";
   }
 
   private async onMessage(msg: Message) {

@@ -6,6 +6,22 @@
 
   let state = null;
 
+  // ------------------------------------------------------------ view state
+  // VS Code destroys the panel while it is hidden and rebuilds it when shown again: keep the open
+  // sections, the filter and the scroll position across that.
+  const sections = [...document.querySelectorAll("details")];
+  const saved = vscode.getState() || {};
+  if (Array.isArray(saved.open) && saved.open.length === sections.length) sections.forEach((d, i) => (d.open = saved.open[i]));
+  if (saved.filter) $("filter").value = saved.filter;
+  let pendingScroll = saved.scrollY || 0; // applied once the first list is rendered
+
+  let saveTimer = 0;
+  function saveView() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => vscode.setState({ open: sections.map((d) => d.open), filter: $("filter").value, scrollY: window.scrollY }), 200);
+  }
+  sections.forEach((d) => d.addEventListener("toggle", saveView));
+
   // ------------------------------------------------------------ switching lock
   // The extension owns the real lock; this blocks clicks right away, before its reply arrives.
   let busy = false;
@@ -60,7 +76,10 @@
   $("setFolder").onclick = () => send({ type: "setFolder" });
   $("refresh").onclick = () => send({ type: "refresh" });
   $("reshuffle").onclick = () => send({ type: "reshuffle" });
-  $("filter").oninput = renderList;
+  $("filter").oninput = () => {
+    renderList();
+    saveView();
+  };
 
   for (const key of ["sortBy", "sortOrder", "target", "reloadMode"]) {
     $(key).onchange = (e) => send({ type: "setOption", key, value: e.target.value });
@@ -81,15 +100,40 @@
     $("previewEmpty").textContent = emptyText;
   }
 
+  // The current wallpaper is shown as its still thumbnail (see SidebarProvider.previewUri).
+  function showCurrent() {
+    const waiting = state.thumbsAvailable ? "Generating preview…" : "Previews need ffmpeg";
+    setPreview(state.currentUri, state.current ? waiting : "No wallpaper set");
+  }
+
   let hovered = null;
   function showHovered() {
     setPreview(hovered.thumb, state.thumbsAvailable ? "Generating preview…" : "Previews need ffmpeg");
   }
 
+  // Scroll only the list to the current wallpaper. scrollIntoView() would also scroll the page, and
+  // even VS Code's container around the webview, so the panel jumped on every refresh.
+  function revealCurrent() {
+    const list = $("list");
+    const li = list.querySelector(".current");
+    if (!li) return;
+    const offset = li.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    if (offset < 0) list.scrollTop += offset;
+    else if (offset + li.offsetHeight > list.clientHeight) list.scrollTop += offset + li.offsetHeight - list.clientHeight;
+  }
+
+  let revealedPath = null;
+  let renderedFilter = "";
   function renderList() {
     if (!state) return;
     const list = $("list");
     const filter = $("filter").value.toLowerCase();
+    // A refresh (e.g. an option changed) keeps the list where the user left it; only a new
+    // current wallpaper or a new filter moves it.
+    const filterChanged = filter !== renderedFilter;
+    const keepScroll = filterChanged ? 0 : list.scrollTop;
+    const reveal = filterChanged || revealedPath !== state.current;
+    renderedFilter = filter;
     list.innerHTML = "";
     state.files.forEach((file, i) => {
       if (filter && !file.name.toLowerCase().includes(filter)) return;
@@ -105,12 +149,34 @@
       };
       li.onmouseleave = () => {
         hovered = null;
-        setPreview(state.currentUri);
+        showCurrent();
       };
       list.appendChild(li);
     });
-    list.querySelector(".current")?.scrollIntoView({ block: "nearest" });
+    list.scrollTop = keepScroll;
+    // Inside a closed section the list has no layout yet: reveal it once the section opens.
+    if (reveal && list.offsetParent) {
+      revealCurrent();
+      revealedPath = state.current;
+    }
   }
+  $("list").closest("details").addEventListener("toggle", (e) => {
+    if (/** @type {HTMLDetailsElement} */ (e.target).open && revealedPath !== state?.current) {
+      revealCurrent();
+      revealedPath = state.current;
+    }
+  });
+
+  // The list scrolls inside the scrolling page. While the page moves under a still pointer, the
+  // list would slide under it and take over the wheel, stopping the page halfway. So the list
+  // ignores the pointer while the page is scrolling, and takes the wheel again after a short pause.
+  let pageScrollTimer = 0;
+  window.addEventListener("scroll", () => {
+    document.body.classList.add("page-scrolling");
+    clearTimeout(pageScrollTimer);
+    pageScrollTimer = setTimeout(() => document.body.classList.remove("page-scrolling"), 350);
+    saveView();
+  }, { passive: true });
 
   // ------------------------------------------------------------ tools
   const convertFields = ["fps", "width", "height", "startSeconds", "durationSeconds", "opacity"];
@@ -155,6 +221,12 @@
       if (hovered && hovered.path === data.path) showHovered();
       return;
     }
+    if (data.type === "currentThumb") {
+      if (!state) return;
+      state.currentUri = data.thumb;
+      if (!hovered) showCurrent();
+      return;
+    }
     if (data.type === "busy") {
       confirmed = data.busy;
       setBusy(data.busy);
@@ -192,8 +264,12 @@
     $("count").textContent = `(${total})`;
     $("currentName").textContent = state.current ? state.current.split(/[\\/]/).pop() : "";
     $("currentName").title = state.current;
-    setPreview(state.currentUri);
+    if (!hovered) showCurrent();
     renderList();
+    if (pendingScroll) {
+      window.scrollTo(0, pendingScroll);
+      pendingScroll = 0;
+    }
 
     // Only fill the tool forms once, so a state refresh doesn't wipe what the user is typing.
     if (!toolsInitialized) {
