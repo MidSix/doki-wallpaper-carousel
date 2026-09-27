@@ -1,0 +1,284 @@
+{
+  "name": "doki-wallpaper-carousel",
+  "displayName": "Wallpaper Carousel for Doki Theme",
+  "description": "Unofficial companion for the Doki Theme: flip your animated wallpaper through a folder of GIFs, show it behind the side bars, panel and terminal, and turn .mp4 videos into GIF wallpapers.",
+  "version": "1.0.0",
+  "publisher": "MidSix",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1b1520",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MidSix/doki-wallpaper-carousel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MidSix/doki-wallpaper-carousel/issues"
+  },
+  "homepage": "https://github.com/MidSix/doki-wallpaper-carousel#readme",
+  "keywords": [
+    "doki",
+    "doki theme",
+    "wallpaper",
+    "background",
+    "gif",
+    "animated",
+    "carousel",
+    "anime",
+    "slideshow",
+    "terminal"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionDependencies": [
+    "unthrottled.doki-theme"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "dokiCarousel.previous",
+        "title": "Previous Wallpaper",
+        "category": "Wallpaper Carousel",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "dokiCarousel.next",
+        "title": "Next Wallpaper",
+        "category": "Wallpaper Carousel",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "dokiCarousel.random",
+        "title": "Random Wallpaper",
+        "category": "Wallpaper Carousel",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "dokiCarousel.pick",
+        "title": "Pick Wallpaper...",
+        "category": "Wallpaper Carousel"
+      },
+      {
+        "command": "dokiCarousel.setFolder",
+        "title": "Set Wallpaper Folder...",
+        "category": "Wallpaper Carousel"
+      },
+      {
+        "command": "dokiCarousel.extractMp4",
+        "title": "Extract .mp4 Files From Folder Tree...",
+        "category": "Wallpaper Carousel"
+      },
+      {
+        "command": "dokiCarousel.convertMp4",
+        "title": "Convert .mp4 to GIF...",
+        "category": "Wallpaper Carousel"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "dokiCarousel.previous",
+          "group": "navigation@-2",
+          "when": "config.dokiCarousel.showEditorTitleArrows"
+        },
+        {
+          "command": "dokiCarousel.next",
+          "group": "navigation@-1",
+          "when": "config.dokiCarousel.showEditorTitleArrows"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "dokiCarousel.previous",
+          "when": "view == dokiCarousel.panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dokiCarousel.random",
+          "when": "view == dokiCarousel.panel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dokiCarousel.next",
+          "when": "view == dokiCarousel.panel",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "dokiCarousel.previous",
+        "key": "ctrl+alt+shift+left"
+      },
+      {
+        "command": "dokiCarousel.next",
+        "key": "ctrl+alt+shift+right"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dokiCarousel",
+          "title": "Wallpaper Carousel",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "dokiCarousel": [
+        {
+          "type": "webview",
+          "id": "dokiCarousel.panel",
+          "name": "Wallpapers"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Wallpaper Carousel for Doki Theme",
+      "properties": {
+        "dokiCarousel.folder": {
+          "type": "string",
+          "default": "",
+          "description": "Folder containing the GIFs/images to cycle through."
+        },
+        "dokiCarousel.includeSubfolders": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also look for images inside subfolders."
+        },
+        "dokiCarousel.extensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".gif"
+          ],
+          "description": "File extensions included in the carousel."
+        },
+        "dokiCarousel.sortBy": {
+          "type": "string",
+          "enum": [
+            "name",
+            "modified",
+            "created",
+            "size",
+            "random"
+          ],
+          "default": "name",
+          "description": "How files in the folder are ordered."
+        },
+        "dokiCarousel.sortOrder": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "asc"
+        },
+        "dokiCarousel.target": {
+          "type": "string",
+          "enum": [
+            "wallpaper",
+            "background",
+            "both"
+          ],
+          "default": "wallpaper",
+          "enumDescriptions": [
+            "Change doki.wallpaper.path (glass pane over the code editor)",
+            "Change doki.background.path (empty editor background)",
+            "Change both"
+          ],
+          "description": "Which Doki setting the carousel changes."
+        },
+        "dokiCarousel.reloadMode": {
+          "type": "string",
+          "enum": [
+            "newWindow",
+            "reload",
+            "none"
+          ],
+          "default": "newWindow",
+          "enumDescriptions": [
+            "Open the workspace in a new window and close the current one (needed: Reload Window keeps the old CSS cached)",
+            "Run 'Reload Window' (fast, but installed VS Code usually shows the cached old wallpaper)",
+            "Do nothing; restart VS Code yourself"
+          ],
+          "description": "How the window is refreshed once Doki has installed the new wallpaper."
+        },
+        "dokiCarousel.maximize": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the refreshed window maximized (reloadMode = newWindow)."
+        },
+        "dokiCarousel.fixTerminalText": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep terminal text readable over the wallpaper by setting terminal.integrated.gpuAcceleration to \"off\" (Doki's wallpaper hides the GPU renderer's text)."
+        },
+        "dokiCarousel.transparentTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Make terminal.background transparent (workbench.colorCustomizations) so the wallpaper shows behind the terminal text."
+        },
+        "dokiCarousel.transparentPanels": {
+          "type": "boolean",
+          "default": true,
+          "description": "Make sideBar.background, sideBarSectionHeader.background and panel.background transparent so the wallpaper shows in both side bars, the bottom panel and the terminal tabs list."
+        },
+        "dokiCarousel.quickInputTint": {
+          "type": "number",
+          "default": 65,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Darkness (%) of the tint behind the command palette (Ctrl+Shift+P). 0 = fully transparent, 100 = solid black. Also adjustable with the slider in the Wallpaper Carousel panel."
+        },
+        "dokiCarousel.brightenThumbnails": {
+          "type": "boolean",
+          "default": true,
+          "description": "Brighten the hover previews of dimmed wallpapers (GIFs blended with a dark background), so they are easier to recognize. Only the previews change, never the GIFs."
+        },
+        "dokiCarousel.showEditorTitleArrows": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show ← → arrows in the editor title bar."
+        },
+        "dokiCarousel.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show ◀ n/N ▶ controls in the status bar."
+        },
+        "dokiCarousel.ffmpegPath": {
+          "type": "string",
+          "default": "",
+          "description": "Folder containing ffmpeg and ffprobe (or the path to the ffmpeg executable). Empty = search the PATH and the usual install locations (Homebrew, apt, winget, scoop, ...)."
+        },
+        "dokiCarousel.converterScript": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: your own .ps1 converter taking the parameters of mp4_to_gif.ps1 (-Path, -Fps, -Width, ...). Runs with powershell.exe on Windows and pwsh (PowerShell 7) on macOS/Linux. Empty = built-in ffmpeg converter."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
