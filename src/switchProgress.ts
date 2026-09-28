@@ -6,6 +6,15 @@ const BAR_WIDTH = 24;
 // Share of the bar each stage fills, in percent.
 const RANGES: Record<SwitchStage, [number, number]> = { save: [0, 5], install: [5, 60], reopen: [60, 100] };
 
+/** What the bar says: its title, the hint below it and the label of each stage. */
+export interface SwitchSteps {
+  title: string;
+  placeholder: string;
+  save: string;
+  install: string;
+  reopen: string;
+}
+
 /**
  * A progress bar where the command palette opens, shown while a wallpaper is applied. It is a
  * QuickPick used as a display: the only centered overlay an extension can show in the workbench.
@@ -19,13 +28,12 @@ export class SwitchProgress implements vscode.Disposable {
   private hidden = false;
 
   constructor(
-    name: string,
+    private readonly steps: SwitchSteps,
     private readonly installMs: number,
-    private readonly reopenMs: number,
-    private readonly reopenLabel: string
+    private readonly reopenMs: number
   ) {
-    this.pick.title = `Applying wallpaper: ${name}`;
-    this.pick.placeholder = "Please wait, the window will reopen with the new wallpaper";
+    this.pick.title = steps.title;
+    this.pick.placeholder = steps.placeholder;
     this.pick.busy = true;
     this.pick.ignoreFocusOut = true;
     // Esc only hides the bar; the switch itself keeps going.
@@ -82,9 +90,9 @@ export class SwitchProgress implements vscode.Disposable {
         description: seconds > 0 ? `about ${seconds} s left` : "almost done…",
         alwaysShow: true,
       },
-      step("save", "Save the new wallpaper path"),
-      step("install", "Doki installs the wallpaper"),
-      step("reopen", this.reopenLabel),
+      step("save", this.steps.save),
+      step("install", this.steps.install),
+      step("reopen", this.steps.reopen),
     ];
   }
 

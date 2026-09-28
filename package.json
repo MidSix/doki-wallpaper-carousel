@@ -1,8 +1,8 @@
 {
   "name": "doki-wallpaper-carousel",
   "displayName": "Wallpaper Carousel for Doki Theme",
-  "description": "Unofficial companion for the Doki Theme: flip your animated wallpaper through a folder of GIFs, show it behind the side bars, panel and terminal, and turn .mp4 videos into GIF wallpapers.",
-  "version": "1.0.0",
+  "description": "Unofficial companion for the Doki Theme: flip your wallpaper through a folder of GIFs and images (PNG, JPG, WebP, AVIF, ...), choose where it shows (editors, side bars, panel, terminal), turn .mp4 videos into GIF wallpapers and darken wallpapers so code stays readable over them.",
+  "version": "1.1.0",
   "publisher": "MidSix",
   "author": {
     "name": "Sebastián David Moreno Expósito"
@@ -27,6 +27,9 @@
     "wallpaper",
     "background",
     "gif",
+    "png",
+    "jpg",
+    "webp",
     "animated",
     "carousel",
     "anime",
@@ -67,6 +70,12 @@
         "icon": "$(sync)"
       },
       {
+        "command": "dokiCarousel.removeWallpaper",
+        "title": "Remove Wallpaper",
+        "category": "Wallpaper Carousel",
+        "icon": "$(close)"
+      },
+      {
         "command": "dokiCarousel.pick",
         "title": "Pick Wallpaper...",
         "category": "Wallpaper Carousel"
@@ -84,6 +93,21 @@
       {
         "command": "dokiCarousel.convertMp4",
         "title": "Convert .mp4 to GIF...",
+        "category": "Wallpaper Carousel"
+      },
+      {
+        "command": "dokiCarousel.setOpacity",
+        "title": "Set Wallpaper Opacity...",
+        "category": "Wallpaper Carousel"
+      },
+      {
+        "command": "dokiCarousel.optimizeGifs",
+        "title": "Optimize GIFs...",
+        "category": "Wallpaper Carousel"
+      },
+      {
+        "command": "dokiCarousel.resetOpacity",
+        "title": "Reset Wallpaper Opacity...",
         "category": "Wallpaper Carousel"
       }
     ],
@@ -152,7 +176,7 @@
         "dokiCarousel.folder": {
           "type": "string",
           "default": "",
-          "description": "Folder containing the GIFs/images to cycle through."
+          "description": "Folder containing the wallpapers (GIFs and images) to cycle through."
         },
         "dokiCarousel.includeSubfolders": {
           "type": "boolean",
@@ -165,9 +189,18 @@
             "type": "string"
           },
           "default": [
-            ".gif"
+            ".gif",
+            ".png",
+            ".apng",
+            ".jpg",
+            ".jpeg",
+            ".jfif",
+            ".webp",
+            ".avif",
+            ".bmp",
+            ".ico"
           ],
-          "description": "File extensions included in the carousel."
+          "description": "File extensions included in the carousel. The default is every format Doki can show (SVG and TIFF can't be shown)."
         },
         "dokiCarousel.sortBy": {
           "type": "string",
@@ -179,7 +212,7 @@
             "random"
           ],
           "default": "name",
-          "description": "How files in the folder are ordered."
+          "description": "How files in the folder are ordered (the panel's Sort by list sets this and dokiCarousel.sortOrder)."
         },
         "dokiCarousel.sortOrder": {
           "type": "string",
@@ -187,7 +220,8 @@
             "asc",
             "desc"
           ],
-          "default": "asc"
+          "default": "asc",
+          "description": "asc = A to Z, oldest or smallest first; desc = the other way round."
         },
         "dokiCarousel.target": {
           "type": "string",
@@ -198,41 +232,31 @@
           ],
           "default": "wallpaper",
           "enumDescriptions": [
-            "Change doki.wallpaper.path (glass pane over the code editor)",
-            "Change doki.background.path (empty editor background)",
-            "Change both"
+            "doki.wallpaper.path: shows through the code, the side bars, the panel and the terminal",
+            "doki.background.path: fills the editor area only while no file is open",
+            "Both"
           ],
-          "description": "Which Doki setting the carousel changes."
-        },
-        "dokiCarousel.reloadMode": {
-          "type": "string",
-          "enum": [
-            "newWindow",
-            "reload",
-            "none"
-          ],
-          "default": "newWindow",
-          "enumDescriptions": [
-            "Open the workspace in a new window and close the current one (needed: Reload Window keeps the old CSS cached)",
-            "Run 'Reload Window' (fast, but installed VS Code usually shows the cached old wallpaper)",
-            "Do nothing; restart VS Code yourself"
-          ],
-          "description": "How the window is refreshed once Doki has installed the new wallpaper."
+          "description": "Which of Doki's two images the carousel changes. Applying one turns Doki's switch for it (doki.wallpaper.enabled / doki.background.enabled) on."
         },
         "dokiCarousel.maximize": {
           "type": "boolean",
           "default": true,
-          "description": "Open the refreshed window maximized (reloadMode = newWindow)."
+          "description": "Open the refreshed window maximized."
         },
         "dokiCarousel.fixTerminalText": {
           "type": "boolean",
           "default": true,
           "description": "Keep terminal text readable over the wallpaper by setting terminal.integrated.gpuAcceleration to \"off\" (Doki's wallpaper hides the GPU renderer's text)."
         },
+        "dokiCarousel.wallpaperInEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the wallpaper in the editor area (code, Welcome page, Settings, tabs). When off, a small CSS block hides it there; the window reopens to apply the change."
+        },
         "dokiCarousel.transparentTerminal": {
           "type": "boolean",
           "default": true,
-          "description": "Make terminal.background transparent (workbench.colorCustomizations) so the wallpaper shows behind the terminal text."
+          "markdownDescription": "Show the wallpaper behind the terminal text. When off, the terminal gets the theme's own background color (`terminal.background` in `workbench.colorCustomizations`)."
         },
         "dokiCarousel.transparentPanels": {
           "type": "boolean",
@@ -249,7 +273,7 @@
         "dokiCarousel.brightenThumbnails": {
           "type": "boolean",
           "default": true,
-          "description": "Brighten the hover previews of dimmed wallpapers (GIFs blended with a dark background), so they are easier to recognize. Only the previews change, never the GIFs."
+          "description": "Brighten the hover previews of dimmed wallpapers (blended with a dark background), so they are easier to recognize. Only the previews change, never the files."
         },
         "dokiCarousel.showEditorTitleArrows": {
           "type": "boolean",
@@ -275,6 +299,7 @@
     }
   },
   "scripts": {
+    "vscode:uninstall": "node ./out/uninstall",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"

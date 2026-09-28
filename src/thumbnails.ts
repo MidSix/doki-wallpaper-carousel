@@ -74,7 +74,7 @@ function undoDimming(pixels: Buffer): number {
 }
 
 /**
- * Static JPEG previews (the frame in the middle of the GIF), generated once with ffmpeg and
+ * Static JPEG previews (the frame in the middle of an animation), generated once with ffmpeg and
  * cached on disk, so hovering the list never has to decode a heavy animated GIF.
  */
 export class Thumbnails {
@@ -83,6 +83,8 @@ export class Thumbnails {
   // Keyed by thumbnail path: the same GIF needs a new job when the preview style changes.
   private readonly queued = new Set<string>();
   private running = 0;
+  /** Files ffmpeg can't read (such as animated WebP): their preview is the file itself. */
+  private readonly unreadable = new Set<string>();
   /** False when ffmpeg can't be found, so the panel can say why there are no previews. */
   get available(): boolean {
     return !!findTool("ffmpeg");
@@ -128,8 +130,9 @@ export class Thumbnails {
     }
   }
 
-  /** Thumbnail path if it has already been generated. */
+  /** Thumbnail path if it has already been generated, or the file itself if it can't be. */
   get(file: string): string | undefined {
+    if (this.unreadable.has(file)) return file;
     const thumb = this.thumbPath(file);
     return thumb && fs.existsSync(thumb) ? thumb : undefined;
   }
@@ -140,7 +143,7 @@ export class Thumbnails {
     const brighten = brightenThumbnails();
     for (const file of files) {
       const thumb = this.thumbPath(file);
-      if (thumb && !this.queued.has(thumb) && !fs.existsSync(thumb)) {
+      if (thumb && !this.queued.has(thumb) && !this.unreadable.has(file) && !fs.existsSync(thumb)) {
         this.queued.add(thumb);
         this.queue.push({ file, thumb, brighten });
       }
@@ -179,22 +182,37 @@ export class Thumbnails {
       // No ffprobe or no duration: fall back to the first frame.
     }
 
-    try {
-      if (brighten) {
-        // Decode the frame once as raw pixels, fix its brightness here, then encode it.
-        const args = ["-v", "error", "-ss", middle.toFixed(3), "-i", file, "-frames:v", "1"];
-        const pixels = await runRaw(ffmpeg, [...args, "-vf", `scale=${WIDTH}:-2,format=rgb24`, "-f", "rawvideo", "pipe:1"]);
-        const height = pixels.length / (WIDTH * 3);
-        if (!Number.isInteger(height) || height < 1) throw new Error("unexpected frame size");
-        undoDimming(pixels);
-        await encodeJpeg(ffmpeg, pixels, height, thumb);
-      } else {
-        await run(ffmpeg, ["-v", "error", "-y", "-ss", middle.toFixed(3), "-i", file, "-frames:v", "1", "-vf", `scale=${WIDTH}:-2`, "-q:v", "4", thumb]);
+    // The middle frame, else the first one: some files report a duration their stream doesn't
+    // have, such as the still cover image ffmpeg reads from an animated AVIF.
+    for (const at of middle > 0 ? [middle, 0] : [0]) {
+      try {
+        await this.capture(ffmpeg, file, thumb, at, brighten);
+        // Skip previews made in a style that was switched off meanwhile.
+        if (fs.existsSync(thumb) && thumb === this.thumbPath(file)) this._onDidCreate.fire({ file, thumb });
+        return;
+      } catch {
+        // Try the next position.
       }
-    } catch (err) {
-      return;
     }
-    // Skip previews made in a style that was switched off meanwhile.
-    if (fs.existsSync(thumb) && thumb === this.thumbPath(file)) this._onDidCreate.fire({ file, thumb });
+    // Not readable at all: the panel shows the file itself (it only plays while hovered).
+    this.unreadable.add(file);
+    this._onDidCreate.fire({ file, thumb: file });
+  }
+
+  private async capture(ffmpeg: string, file: string, thumb: string, at: number, brighten: boolean) {
+    // Even "-ss 0" gives no frame at all for a single JPEG or ICO image, so no seek at the start.
+    const seek = at > 0 ? ["-ss", at.toFixed(3)] : [];
+    if (brighten) {
+      // Decode the frame once as raw pixels, fix its brightness here, then encode it.
+      const args = ["-v", "error", ...seek, "-i", file, "-frames:v", "1"];
+      const pixels = await runRaw(ffmpeg, [...args, "-vf", `scale=${WIDTH}:-2,format=rgb24`, "-f", "rawvideo", "pipe:1"]);
+      const height = pixels.length / (WIDTH * 3);
+      if (!Number.isInteger(height) || height < 1) throw new Error("unexpected frame size");
+      undoDimming(pixels);
+      await encodeJpeg(ffmpeg, pixels, height, thumb);
+    } else {
+      await run(ffmpeg, ["-v", "error", "-y", ...seek, "-i", file, "-frames:v", "1", "-vf", `scale=${WIDTH}:-2`, "-q:v", "4", thumb]);
+      if (!fs.existsSync(thumb)) throw new Error("no frame at this position");
+    }
   }
 }

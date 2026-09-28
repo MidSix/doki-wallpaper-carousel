@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { applyWallpaper, getCurrentDokiPath } from "./doki";
+import { WALLPAPER_EXTENSIONS } from "./formats";
 import { samePath } from "./platform";
 
 export type SortBy = "name" | "modified" | "created" | "size" | "random";
@@ -84,7 +85,7 @@ export class Carousel {
     const folder = config().get<string>("folder", "");
     if (!folder || !fs.existsSync(folder)) return (this.cache = []);
 
-    const exts = new Set(config().get<string[]>("extensions", [".gif"]).map((e) => e.toLowerCase()));
+    const exts = new Set(config().get<string[]>("extensions", WALLPAPER_EXTENSIONS).map((e) => e.toLowerCase()));
     const files: WallpaperFile[] = [];
     listFiles(folder, config().get<boolean>("includeSubfolders", false), exts, files);
 

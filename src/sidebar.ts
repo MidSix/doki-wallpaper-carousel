@@ -2,22 +2,33 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { Carousel } from "./carousel";
-import { applyWallpaper, currentTask, getCurrentDokiPath, isSwitching, onDidChangeSwitching, onDidChangeTask } from "./doki";
+import { applyWallpaper, currentTask, getCurrentDokiPath, isSwitching, isWallpaperShown, onDidChangeSwitching, onDidChangeTask, removeWallpaper } from "./doki";
 import { samePath } from "./platform";
 import { Thumbnails } from "./thumbnails";
-import { ConvertOptions, convertMp4, defaultConvertOptions, extractMp4 } from "./tools";
+import { WALLPAPER_EXTENSIONS, WALLPAPER_FILTER, isAnimated } from "./formats";
+import { ConvertOptions, DimOptions, OptimizeOptions, convertMp4, defaultConvertOptions, defaultDimOptions, defaultOptimizeOptions, dimWallpapers, extractMp4, optimizeGifs } from "./tools";
 
 const CONVERT_OPTIONS_KEY = "dokiCarousel.convertOptions";
+const DIM_OPTIONS_KEY = "dokiCarousel.dimOptions";
+const OPTIMIZE_OPTIONS_KEY = "dokiCarousel.optimizeOptions";
+// Files picked in the panel for each tool, kept until they are picked again.
+const PICKED_KEY: Record<FileTool, string> = { dim: "dokiCarousel.dimFiles", optimize: "dokiCarousel.optimizeFiles" };
+
+type FileTool = "dim" | "optimize";
 const EXTRACT_SOURCE_KEY = "dokiCarousel.extractSource";
 const EXTRACT_DEST_KEY = "dokiCarousel.extractDestination";
 
 type Message =
-  | { type: "ready" | "refresh" | "prev" | "next" | "random" | "reshuffle" | "setFolder" | "previewPalette" }
+  | { type: "ready" | "refresh" | "prev" | "next" | "random" | "reshuffle" | "setFolder" | "previewPalette" | "resetDim" | "removeWallpaper" }
+  | { type: "sort"; value: string }
   | { type: "apply"; path: string }
   | { type: "setOption"; key: string; value: unknown }
   | { type: "browseDir"; field: string; current?: string }
   | { type: "extract"; source: string; destination: string; move: boolean }
-  | { type: "convert"; options: ConvertOptions };
+  | { type: "convert"; options: ConvertOptions }
+  | { type: "pickFiles"; tool: FileTool }
+  | { type: "dim"; options: DimOptions }
+  | { type: "optimize"; options: OptimizeOptions };
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -76,20 +87,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }),
       currentIndex: this.carousel.currentIndex(),
       current: current ?? "",
+      wallpaperShown: isWallpaperShown(),
       currentUri: this.previewUri(webview, current),
       sortBy: cfg.get("sortBy"),
       sortOrder: cfg.get("sortOrder"),
       includeSubfolders: cfg.get("includeSubfolders"),
       target: cfg.get("target"),
-      reloadMode: cfg.get("reloadMode"),
       busy: isSwitching(),
       task: currentTask() ?? "",
       quickInputTint: cfg.get("quickInputTint"),
       thumbsAvailable: this.thumbnails.available,
       transparentPanels: cfg.get("transparentPanels"),
       transparentTerminal: cfg.get("transparentTerminal"),
+      wallpaperInEditor: cfg.get("wallpaperInEditor"),
       brightenThumbnails: cfg.get("brightenThumbnails"),
       convert: { ...defaultConvertOptions, ...this.context.globalState.get<Partial<ConvertOptions>>(CONVERT_OPTIONS_KEY, {}) },
+      dim: { ...defaultDimOptions, ...this.context.globalState.get<Partial<DimOptions>>(DIM_OPTIONS_KEY, {}) },
+      optimize: { ...defaultOptimizeOptions, ...this.context.globalState.get<Partial<OptimizeOptions>>(OPTIMIZE_OPTIONS_KEY, {}) },
+      dimFiles: this.pickedFiles("dim"),
+      optimizeFiles: this.pickedFiles("optimize"),
       extractSource: this.context.globalState.get<string>(EXTRACT_SOURCE_KEY, ""),
       extractDestination: this.context.globalState.get<string>(EXTRACT_DEST_KEY, folder ? path.join(folder, "mp4") : ""),
     });
@@ -105,9 +121,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (!file || !fs.existsSync(file)) return "";
     const thumb = this.thumbnails.get(file);
     if (thumb) return webview.asWebviewUri(vscode.Uri.file(thumb)).toString();
-    // Still images are cheap to show as they are; a GIF waits for its thumbnail.
-    if (path.extname(file).toLowerCase() !== ".gif") return webview.asWebviewUri(vscode.Uri.file(file)).toString();
-    return "";
+    // Still images are cheap to show as they are; an animation waits for its thumbnail.
+    return isAnimated(file) ? "" : webview.asWebviewUri(vscode.Uri.file(file)).toString();
   }
 
   private async onMessage(msg: Message) {
@@ -135,11 +150,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case "setFolder":
         await vscode.commands.executeCommand("dokiCarousel.setFolder");
         break;
+      case "resetDim":
+        await vscode.commands.executeCommand("dokiCarousel.resetOpacity");
+        break;
       case "apply":
         await applyWallpaper(msg.path);
         break;
+      case "removeWallpaper":
+        await removeWallpaper();
+        break;
+      case "sort": {
+        // One list in the panel: "modified:desc" = newest first, "random" = shuffled.
+        const [sortBy, sortOrder] = msg.value.split(":");
+        if (["name", "modified", "created", "size", "random"].includes(sortBy)) {
+          await cfg.update("sortBy", sortBy, vscode.ConfigurationTarget.Global);
+          if (sortOrder === "asc" || sortOrder === "desc") await cfg.update("sortOrder", sortOrder, vscode.ConfigurationTarget.Global);
+        }
+        break;
+      }
       case "setOption":
-        if (["sortBy", "sortOrder", "includeSubfolders", "target", "reloadMode", "quickInputTint", "transparentPanels", "transparentTerminal", "brightenThumbnails"].includes(msg.key)) {
+        if (["includeSubfolders", "target", "quickInputTint", "transparentPanels", "transparentTerminal", "wallpaperInEditor", "brightenThumbnails"].includes(msg.key)) {
           await cfg.update(msg.key, msg.value, vscode.ConfigurationTarget.Global);
         }
         break;
@@ -180,7 +210,54 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.carousel.refresh();
         break;
       }
+      case "pickFiles": {
+        const picked = await vscode.window.showOpenDialog({
+          canSelectMany: true,
+          filters: msg.tool === "dim" ? { Wallpapers: WALLPAPER_FILTER } : { GIFs: ["gif"] },
+          openLabel: "Select",
+          defaultUri: this.pickStart(msg.tool),
+        });
+        if (!picked?.length) break;
+        await this.context.globalState.update(PICKED_KEY[msg.tool], picked.map((f) => f.fsPath));
+        this.postState();
+        break;
+      }
+      case "dim":
+        await this.context.globalState.update(DIM_OPTIONS_KEY, msg.options);
+        if (this.readyToRun("dim")) await dimWallpapers(this.pickedFiles("dim"), msg.options);
+        this.carousel.refresh();
+        break;
+      case "optimize":
+        await this.context.globalState.update(OPTIMIZE_OPTIONS_KEY, msg.options);
+        if (this.readyToRun("optimize")) await optimizeGifs(this.pickedFiles("optimize"), msg.options);
+        this.carousel.refresh();
+        break;
     }
+  }
+
+  /** Files picked for a tool that still exist. */
+  private pickedFiles(tool: FileTool): string[] {
+    return this.context.globalState.get<string[]>(PICKED_KEY[tool], []).filter((f) => fs.existsSync(f));
+  }
+
+  /** The file dialog opens where the last pick was, else in the wallpaper folder. */
+  private pickStart(tool: FileTool): vscode.Uri | undefined {
+    const last = this.pickedFiles(tool)[0];
+    const folder = last ? path.dirname(last) : vscode.workspace.getConfiguration("dokiCarousel").get<string>("folder");
+    return folder ? vscode.Uri.file(folder) : undefined;
+  }
+
+  private readyToRun(tool: FileTool): boolean {
+    // Don't start when the window is about to close anyway.
+    if (isSwitching()) {
+      vscode.window.setStatusBarMessage("$(sync~spin) A wallpaper is being applied, try again once the window has reopened.", 3000);
+      return false;
+    }
+    if (!this.pickedFiles(tool).length) {
+      vscode.window.showWarningMessage("Choose the files first (the … button next to Files).");
+      return false;
+    }
+    return true;
   }
 
   private html(webview: vscode.Webview): string {
@@ -196,7 +273,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <section>
-    <div class="preview"><img id="preview" alt=""><span id="previewEmpty">No wallpaper set</span></div>
+    <div class="preview">
+      <img id="preview" alt=""><span id="previewEmpty">No wallpaper set</span>
+      <button id="removeWallpaper" class="preview-remove" title="Remove the wallpaper (Doki's stickers stay)" aria-label="Remove the wallpaper">✕</button>
+    </div>
     <div class="nav">
       <button id="prev" title="Previous">◀</button>
       <span id="counter">–</span>
@@ -207,80 +287,113 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div id="taskNote" class="task-note" hidden></div>
   </section>
 
-  <details open>
+  <details id="secWallpapers" open>
     <summary>Wallpapers <span id="count" class="muted"></span></summary>
+    <p class="muted hint">Most wallpapers (GIF, PNG, JPG…) are too bright to read code over. Darken them first in <a href="#" data-open="secOpacity">Set opacity</a>.</p>
     <input id="filter" type="search" placeholder="Filter…">
-    <ul id="list"></ul>
-  </details>
-
-  <details open>
-    <summary>Folder &amp; order</summary>
-    <div class="row"><span id="folder" class="ellipsis muted">No folder set</span></div>
-    <button id="setFolder" class="wide">Set GIF folder…</button>
     <label>Sort by
-      <select id="sortBy">
-        <option value="name">Name</option>
-        <option value="modified">Date modified</option>
-        <option value="created">Date created</option>
-        <option value="size">Size</option>
+      <select id="sort">
+        <option value="name:asc">Name (A → Z)</option>
+        <option value="name:desc">Name (Z → A)</option>
+        <option value="modified:desc">Newest first (modified)</option>
+        <option value="modified:asc">Oldest first (modified)</option>
+        <option value="created:desc">Last added (created)</option>
+        <option value="created:asc">First added (created)</option>
+        <option value="size:desc">Largest first</option>
+        <option value="size:asc">Smallest first</option>
         <option value="random">Random (shuffle)</option>
       </select>
     </label>
-    <label>Order
-      <select id="sortOrder"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
-    </label>
-    <label>Apply to
+    <button id="reshuffle" class="secondary wide">Shuffle again</button>
+    <button id="refresh" class="secondary wide" title="Look for new or deleted files in the folder">Refresh list</button>
+    <ul id="list"></ul>
+  </details>
+
+  <details id="secFolder" open>
+    <summary>Folder</summary>
+    <div class="row"><span id="folder" class="ellipsis muted">No folder set</span></div>
+    <button id="setFolder" class="wide">Set wallpaper folder…</button>
+    <p class="muted hint">Formats: ${WALLPAPER_EXTENSIONS.join(" ")}</p>
+    <label class="check"><input type="checkbox" id="includeSubfolders"> Include subfolders</label>
+    <label>Apply as
       <select id="target">
-        <option value="wallpaper">Wallpaper (doki.wallpaper.path)</option>
-        <option value="background">Background (doki.background.path)</option>
+        <option value="wallpaper">Wallpaper</option>
+        <option value="background">Background (empty editor)</option>
         <option value="both">Both</option>
       </select>
     </label>
-    <label class="check"><input type="checkbox" id="includeSubfolders"> Include subfolders</label>
-    <label>After changing
-      <select id="reloadMode">
-        <option value="newWindow">Reopen window (recommended)</option>
-        <option value="reload">Reload window</option>
-        <option value="none">Nothing</option>
-      </select>
-    </label>
-    <div class="row gap"><button id="refresh" class="secondary">Refresh</button><button id="reshuffle" class="secondary">Reshuffle</button></div>
+    <p class="muted hint">Doki has two images. The <b>wallpaper</b> shows through your code, the side bars, the panel and the terminal. The <b>background</b> only fills the editor area while no file is open, behind the VS Code logo: open a file and it is covered.</p>
   </details>
 
-  <details open>
+  <details id="secOpacity">
+    <summary>Set opacity</summary>
+    <p class="muted">Darkens wallpapers so code stays readable over them. Format, size, animation and transparency are kept. Works with every format listed under Folder except animated WebP.</p>
+    <label>Files<div class="row"><input id="dimFiles" class="picked" type="text" readonly placeholder="Choose wallpapers…"><button data-pick="dim" class="secondary" title="Choose files">…</button></div></label>
+    <label>Opacity <span id="dimOpacityValue"></span>% <span class="muted">(over black, lower = darker)</span><input id="dimOpacity" type="range" min="5" max="100" step="1"></label>
+    <div class="range-hints muted"><span>Dark</span><span>Unchanged</span></div>
+    <label>Destination folder<div class="row"><input id="dimDestination" type="text" placeholder="Same folder (replaces the files)"><button data-browse="dimDestination" class="secondary">…</button></div></label>
+    <p class="muted hint">Saving into the files' own folder replaces them (you are asked first). Pick another folder to keep the originals.</p>
+    <button id="dim" class="wide">Set opacity</button>
+    <button id="resetDim" class="secondary wide" title="Brighten files changed by Set opacity back to about how they were">Reset opacity…</button>
+  </details>
+
+  <details id="secOptimize">
+    <summary>GIF optimization</summary>
+    <p class="muted">Makes GIFs lighter: fewer frames per second, a smaller size or only a fragment. Colors and animation are kept.</p>
+    <label>Files<div class="row"><input id="optimizeFiles" class="picked" type="text" readonly placeholder="Choose GIFs…"><button data-pick="optimize" class="secondary" title="Choose files">…</button></div></label>
+    <div class="grid">
+      <label>FPS <span class="muted">(0 = keep)</span><input id="optFps" type="number" min="0" max="60"></label>
+      <label>Width <span class="muted">(0 = keep)</span><input id="optWidth" type="number" min="0"></label>
+      <label>Height <span class="muted">(-1 = auto)</span><input id="optHeight" type="number" min="-1"></label>
+      <span></span>
+      <label>Start (s)<input id="optStart" type="number" min="0" step="0.1"></label>
+      <label>Duration (s) <span class="muted">(0 = all)</span><input id="optDuration" type="number" min="0" step="0.1"></label>
+    </div>
+    <label>Destination folder<div class="row"><input id="optDestination" type="text" placeholder="Same folder (replaces the files)"><button data-browse="optDestination" class="secondary">…</button></div></label>
+    <p class="muted hint">Saving into the GIFs' own folder replaces them (you are asked first). Pick another folder to keep the originals.</p>
+    <button id="optimize" class="wide">Optimize GIFs</button>
+  </details>
+
+  <details id="secMp4">
+    <summary>.mp4 videos</summary>
+    <p class="muted">Turn your videos into GIF wallpapers.</p>
+    <details id="secExtract">
+      <summary>Extract .mp4 files</summary>
+      <p class="muted">Collects every .mp4 in a folder and all its subfolders into one folder.</p>
+      <label>Source folder<div class="row"><input id="extractSource" type="text"><button data-browse="extractSource" class="secondary">…</button></div></label>
+      <label>Destination folder<div class="row"><input id="extractDestination" type="text"><button data-browse="extractDestination" class="secondary">…</button></div></label>
+      <label class="check"><input type="checkbox" id="extractMove"> Move instead of copy</label>
+      <button id="extract" class="wide">Extract .mp4 files</button>
+    </details>
+
+    <details id="secConvert">
+      <summary>Convert .mp4 → GIF</summary>
+      <div class="grid">
+        <label>FPS<input id="fps" type="number" min="1" max="60"></label>
+        <label>Width<input id="width" type="number" min="16"></label>
+        <label>Height <span class="muted">(-1 = auto)</span><input id="height" type="number" min="-1"></label>
+        <span></span>
+        <label>Start (s)<input id="startSeconds" type="number" min="0" step="0.1"></label>
+        <label>Duration (s) <span class="muted">(0 = all)</span><input id="durationSeconds" type="number" min="0" step="0.1"></label>
+      </div>
+      <label>Video opacity <span id="opacityValue"></span>% <span class="muted">(over black, lower = darker)</span><input id="opacity" type="range" min="0" max="100"></label>
+      <label>Destination folder<div class="row"><input id="convertDestination" type="text" placeholder="Next to each .mp4"><button data-browse="convertDestination" class="secondary">…</button></div></label>
+      <button id="convert" class="wide">Select .mp4 files &amp; convert…</button>
+    </details>
+  </details>
+
+  <details id="secAppearance" open>
     <summary>Appearance</summary>
     <label>Command palette tint <span id="quickInputTintValue"></span>%
       <input id="quickInputTint" type="range" min="0" max="100" step="1">
     </label>
     <div class="range-hints muted"><span>Transparent</span><span>Solid</span></div>
     <button id="previewPalette" class="secondary wide">Open command palette to preview</button>
+    <label class="check"><input type="checkbox" id="wallpaperInEditor"> Wallpaper in editors</label>
+    <p class="muted hint indent">Code, Welcome page, Settings and tabs. Changing it reopens the window.</p>
     <label class="check"><input type="checkbox" id="transparentPanels"> Wallpaper in side bars &amp; panel</label>
     <label class="check"><input type="checkbox" id="transparentTerminal"> Wallpaper in terminal</label>
-    <label class="check" title="Undo the dark layer of dimmed GIFs in the hover previews only"><input type="checkbox" id="brightenThumbnails"> Brighten dimmed previews</label>
-  </details>
-
-  <details>
-    <summary>Extract .mp4 files</summary>
-    <p class="muted">Collects every .mp4 in a folder and all its subfolders into one folder.</p>
-    <label>Source folder<div class="row"><input id="extractSource" type="text"><button data-browse="extractSource" class="secondary">…</button></div></label>
-    <label>Destination folder<div class="row"><input id="extractDestination" type="text"><button data-browse="extractDestination" class="secondary">…</button></div></label>
-    <label class="check"><input type="checkbox" id="extractMove"> Move instead of copy</label>
-    <button id="extract" class="wide">Extract .mp4 files</button>
-  </details>
-
-  <details>
-    <summary>Convert .mp4 → GIF</summary>
-    <div class="grid">
-      <label>FPS<input id="fps" type="number" min="1" max="60"></label>
-      <label>Width<input id="width" type="number" min="16"></label>
-      <label>Height <span class="muted">(-1 = auto)</span><input id="height" type="number" min="-1"></label>
-      <span></span>
-      <label>Start (s)<input id="startSeconds" type="number" min="0" step="0.1"></label>
-      <label>Duration (s) <span class="muted">(0 = all)</span><input id="durationSeconds" type="number" min="0" step="0.1"></label>
-    </div>
-    <label>Video opacity <span id="opacityValue"></span>% <span class="muted">(over black, lower = darker)</span><input id="opacity" type="range" min="0" max="100"></label>
-    <label>Destination folder<div class="row"><input id="convertDestination" type="text" placeholder="Next to each .mp4"><button data-browse="convertDestination" class="secondary">…</button></div></label>
-    <button id="convert" class="wide">Select .mp4 files &amp; convert…</button>
+    <label class="check" title="Undo the dark layer of darkened wallpapers in the hover previews only"><input type="checkbox" id="brightenThumbnails"> Brighten dimmed previews</label>
   </details>
 
   <script nonce="${nonce}" src="${media("sidebar.js")}"></script>
