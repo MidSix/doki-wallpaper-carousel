@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.0
+
+### New
+
+- **Live wallpaper opacity**: an *Opacity* slider at the top of the panel's *Wallpapers* section darkens the wallpaper while you drag it, without reopening the window or changing the files. The wallpaper and the background keep separate opacities: the slider sets the one chosen with *w* / *b*. The window reopens once, the first time, to load the CSS it needs.
+- **Theme from wallpaper** (off by default): VS Code's colors come from the wallpaper's palette and follow it each time it changes, with every text color checked for contrast. It can be turned on while a wallpaper is set; turning it on asks first and switches to VS Code's own dark theme, so Doki's colors don't mix in. The palette can come from the background instead with `dokiCarousel.paletteSource`.
+- **w** and **b** buttons on the panel's preview switch *Apply as* between Wallpaper and Background in one click. A grey ring marks the chosen one (both with *Both*), and each turns yellow while that image shows a file.
+- **Loops in GIF optimization**: with one GIF picked, yellow dots on a track show where its animation starts over. Click one to keep just that loop in *Start* and *Duration*; a *Match* slider sets how alike the frames must be.
+- **Wallpapers too large for VS Code are caught before applying.** VS Code can load up to 360 MB of images, wallpaper and background together (the same on every computer). Past that, Doki failed and showed its page about file permissions, which had nothing to do with it. Now the extension explains the problem and offers to open **GIF optimization** with the file already picked, or to switch off the other image to make room. Files that don't fit are marked with ⚠ in the panel's list and the status bar list, and the arrows and *Random* skip them. See *How large a wallpaper can be* in the README.
+- **Uninstalling** removes the colors the extension added to `workbench.colorCustomizations` and asks whether to uninstall Doki Theme too.
+- *Optimize GIFs* from the command palette opens its section of the panel.
+
+### Removed
+
+- **Set opacity**, **Reset opacity** and the conversion's **Video opacity**: the Opacity slider does the same without rewriting the files. Wallpapers darkened with them are still brightened in the hover previews.
+
+### Fixed
+
+- **GIF optimization** with a *Start* above 0 failed with "Error opening input file …palette….png". The fragment is now cut inside ffmpeg's filters, so the palette is made from the kept frames only.
+
 ## 1.1.0
 
 - **Every format Doki can show**: the carousel now lists GIF, PNG (also animated APNG), JPG/JPEG/JFIF, WebP, AVIF, BMP and ICO wallpapers, not only GIFs. The button is now *Set wallpaper folder…*, with the accepted formats shown below it. SVG and TIFF are left out: VS Code can't display them as a wallpaper.

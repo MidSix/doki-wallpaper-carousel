@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
+import { constants } from "buffer";
 import * as fs from "fs";
 import * as path from "path";
 import { applyOverrides, overridesCss, rememberPatched } from "./cssOverrides";
 import { SwitchProgress, SwitchSteps } from "./switchProgress";
+import { PALETTE_KEYS } from "./themeColors";
 
 // Doki's own ConfigWatcher listens to these settings: when one of them changes to an
 // existing file, Doki rewrites VS Code's workbench CSS. We only change the setting.
@@ -29,14 +31,152 @@ function targetKeys(): string[] {
 /** Path currently configured in Doki for the carousel's target. */
 export function getCurrentDokiPath(): string | undefined {
   const value = vscode.workspace.getConfiguration(DOKI_SECTION).get<string>(targetKeys()[0]);
-  // Normalized: a file reinstalled after Set opacity is set as "dir/./name" (see applyWallpaper).
+  // Normalized: a file reinstalled after it changed is set as "dir/./name" (see applyWallpaper).
   return value ? path.normalize(value) : undefined;
 }
 
-/** Whether Doki shows an image for the carousel's target: a path is set and Doki's switch is on. */
-export function isWallpaperShown(): boolean {
+/** Whether Doki shows an image of ours there: a path is set and Doki's switch is on. */
+function isShown(key: string): boolean {
   const doki = vscode.workspace.getConfiguration(DOKI_SECTION);
-  return targetKeys().some((key) => !!doki.get<string>(key) && doki.get<boolean>(ENABLED_KEY[key], true));
+  return !!doki.get<string>(key) && doki.get<boolean>(ENABLED_KEY[key], true);
+}
+
+/** Whether Doki shows an image for the carousel's target. */
+export function isWallpaperShown(): boolean {
+  return targetKeys().some(isShown);
+}
+
+/** Which of Doki's two images show a file, whatever the carousel's target. */
+export function shownImages(): { wallpaper: boolean; background: boolean } {
+  return { wallpaper: isShown(WALLPAPER_KEY), background: isShown(BACKGROUND_KEY) };
+}
+
+// ---------------------------------------------------------------- size limit
+
+const MB = 1024 * 1024;
+/**
+ * Most image data Doki can put in VS Code's stylesheet, wallpaper and background together. Doki
+ * embeds each image as base64 (4 characters for every 3 bytes) and builds the whole stylesheet as
+ * one JavaScript string, which V8 caps at MAX_STRING_LENGTH characters: 536,870,888 in the 64-bit
+ * V8 of VS Code, on every computer. That leaves about 384 MB for images; past it Doki fails with
+ * "Invalid string length" and shows its page about file permissions, which has nothing to do with
+ * it. The rest of the stylesheet and a margin leave 360 MB.
+ */
+const MAX_IMAGES_BYTES = Math.min(360 * MB, Math.floor((constants.MAX_STRING_LENGTH * 3) / 4) - 24 * MB);
+const LABEL: Record<string, string> = { [WALLPAPER_KEY]: "Wallpaper", [BACKGROUND_KEY]: "Background" };
+
+export function formatSize(bytes: number): string {
+  if (bytes >= 1024 * MB) return `${(bytes / 1024 / MB).toFixed(1)} GB`;
+  return `${(bytes / MB).toFixed(bytes < 10 * MB ? 1 : 0)} MB`;
+}
+
+function fileSize(file: string | undefined): number {
+  try {
+    return file ? fs.statSync(file).size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Doki's image that the carousel doesn't set (none when it sets both). */
+function otherKey(): string | undefined {
+  return [WALLPAPER_KEY, BACKGROUND_KEY].find((key) => !targetKeys().includes(key));
+}
+
+/** How large an image the carousel can apply: `max` on its own, `now` next to Doki's other image. */
+export interface ImageRoom {
+  max: number;
+  now: number;
+  /** The other image taking room, e.g. "the Background (x.gif, 80 MB)". */
+  other?: string;
+}
+
+export function imageRoom(): ImageRoom {
+  // Applied as both, the image is embedded twice.
+  const max = Math.floor(MAX_IMAGES_BYTES / targetKeys().length);
+  const key = otherKey();
+  const doki = vscode.workspace.getConfiguration(DOKI_SECTION);
+  const file = key && doki.get<string>(key);
+  const size = fileSize(file || undefined);
+  // An image too large on its own is explained when applying (see sizeProblem).
+  if (!key || !file || !size || !doki.get<boolean>(ENABLED_KEY[key], true) || size > MAX_IMAGES_BYTES) return { max, now: max };
+  return { max, now: Math.max(0, max - size), other: `the ${LABEL[key]} (${path.basename(file)}, ${formatSize(size)})` };
+}
+
+/** Why a file of this size can't be applied now, or "" when it can. */
+export function tooLargeReason(size: number, room: ImageRoom): string {
+  if (size > room.max) {
+    return room.max === MAX_IMAGES_BYTES
+      ? `Too large: VS Code can load images up to ${formatSize(MAX_IMAGES_BYTES)}`
+      : `Too large to apply as both Wallpaper and Background (up to ${formatSize(room.max)} each)`;
+  }
+  if (size > room.now) return `Too large next to ${room.other}: VS Code can load up to ${formatSize(MAX_IMAGES_BYTES)} for both together`;
+  return "";
+}
+
+/** Make room for an image: turn off Doki's other image, or also clear its path. */
+export interface SizeFix {
+  key: string;
+  clear: boolean;
+  label: string;
+}
+
+interface SizeProblem {
+  message: string;
+  /** GIFs to preselect in GIF optimization. */
+  optimize: string[];
+  fix?: SizeFix;
+}
+
+/** Why Doki couldn't install `imagePath` for the carousel's target, or undefined when it fits. */
+function sizeProblem(imagePath: string, fix?: SizeFix): SizeProblem | undefined {
+  const gifs = (...files: string[]) => files.filter((f) => path.extname(f).toLowerCase() === ".gif");
+  const lighter = (files: string[]) => (gifs(...files).length ? "Make it lighter with GIF optimization." : "Use a smaller version.");
+  const limit = formatSize(MAX_IMAGES_BYTES);
+  const name = path.basename(imagePath);
+  const size = fileSize(imagePath);
+
+  if (size > MAX_IMAGES_BYTES) {
+    return { message: `${name} is ${formatSize(size)}, and VS Code can load images up to ${limit}. ${lighter([imagePath])}`, optimize: gifs(imagePath) };
+  }
+  if (targetKeys().length === 2 && size * 2 > MAX_IMAGES_BYTES) {
+    return {
+      message: `${name} is ${formatSize(size)}: applied as both Wallpaper and Background it counts twice (${formatSize(size * 2)}), and VS Code can load up to ${limit} of images. Apply it as Wallpaper only, or make it lighter.`,
+      optimize: gifs(imagePath),
+    };
+  }
+
+  const key = otherKey();
+  if (!key || fix?.key === key) return undefined;
+  const doki = vscode.workspace.getConfiguration(DOKI_SECTION);
+  const otherPath = doki.get<string>(key);
+  const otherSize = fileSize(otherPath || undefined);
+  if (!otherPath || !otherSize) return undefined;
+  const other = `${path.basename(otherPath)} (${formatSize(otherSize)})`;
+  if (otherSize > MAX_IMAGES_BYTES) {
+    // Doki reads both files on every install, even the one whose switch is off.
+    return {
+      message: `Doki's ${LABEL[key]} is ${other}, over the ${limit} VS Code can load. Doki reads it even while the ${LABEL[key].toLowerCase()} is off, so no image can be installed until it changes.`,
+      optimize: gifs(otherPath),
+      fix: { key, clear: true, label: `Clear the ${LABEL[key]} and Apply` },
+    };
+  }
+  if (doki.get<boolean>(ENABLED_KEY[key], true) && size + otherSize > MAX_IMAGES_BYTES) {
+    return {
+      message: `${name} (${formatSize(size)}) and the ${LABEL[key].toLowerCase()} ${other} add up to ${formatSize(size + otherSize)}, and VS Code can load up to ${limit} of images for both together.`,
+      optimize: gifs(imagePath, otherPath),
+      fix: { key, clear: false, label: `Turn off the ${LABEL[key]} and Apply` },
+    };
+  }
+  return undefined;
+}
+
+async function reportSizeProblem(imagePath: string, problem: SizeProblem) {
+  const optimize = "Optimize…";
+  const actions = [...(problem.optimize.length ? [optimize] : []), ...(problem.fix ? [problem.fix.label] : [])];
+  const choice = await vscode.window.showWarningMessage(problem.message, ...actions);
+  if (choice === optimize) await vscode.commands.executeCommand("dokiCarousel.optimizeGifs", problem.optimize);
+  else if (choice && problem.fix) await applyWallpaper(imagePath, problem.fix);
 }
 
 // Same file Doki writes to (see Doki's ENV.ts).
@@ -108,7 +248,7 @@ async function waitForCss(css: string | undefined, done: (text: string) => boole
 
 /**
  * The same file under another name: "dir/./name". Doki only reinstalls when the text of its
- * setting changes, so this makes it pick up a file whose content changed (Set opacity).
+ * setting changes, so this makes it pick up a file whose content changed (GIF optimization).
  */
 function otherSpelling(file: string): string {
   return `${path.dirname(file)}${path.sep}.${path.sep}${path.basename(file)}`;
@@ -233,6 +373,14 @@ function wantedColors(): { colors: Record<string, string | undefined>; fallbacks
   const panels = cfg.get<boolean>("transparentPanels", true) ? TRANSPARENT : undefined;
   const tint = Math.min(100, Math.max(0, cfg.get<number>("quickInputTint", 65)));
   const quickInput = "#000000" + Math.round((tint / 100) * 255).toString(16).padStart(2, "0");
+  // Black over each image (see dimRules in cssOverrides.ts). Only while Doki's switch for that
+  // image is on: the same layer would darken those elements' plain colors once it is gone.
+  const doki = vscode.workspace.getConfiguration(DOKI_SECTION);
+  const dim = (setting: string, key: string) => {
+    const opacity = Math.min(100, Math.max(0, cfg.get<number>(setting, 100)));
+    if (opacity >= 100 || !doki.get<boolean>(ENABLED_KEY[key], true)) return undefined;
+    return "#000000" + Math.round(((100 - opacity) / 100) * 255).toString(16).padStart(2, "0");
+  };
   return {
     colors: {
       // Covers Doki's wallpaper on the terminal when it is switched off (see opaqueTerminalColor).
@@ -243,14 +391,91 @@ function wantedColors(): { colors: Record<string, string | undefined>; fallbacks
       // The command palette floats over the editor with Doki's blur behind it; a translucent
       // tint keeps its text readable while the wallpaper still shows through.
       "quickInput.background": quickInput,
+      "dokiCarousel.wallpaperDim": dim("wallpaperOpacity", WALLPAPER_KEY),
+      "dokiCarousel.backgroundDim": dim("backgroundOpacity", BACKGROUND_KEY),
     },
     fallbacks: new Set(terminalWallpaper ? [] : ["terminal.background"]),
   };
 }
 
+// The colors of "Theme from wallpaper", set by paletteTheme.ts; undefined while it is off.
+let paletteColors: Record<string, string> | undefined;
+
+/** Colors from the wallpaper's palette to lay over the theme, or undefined for none. */
+export function setPaletteColors(colors: Record<string, string> | undefined) {
+  paletteColors = colors;
+}
+
 const OWNED_COLORS_KEY = "dokiCarousel.ownedColors";
 
-export async function ensureTransparentSurfaces(context: vscode.ExtensionContext) {
+// One update at a time: the opacity slider changes its setting in bursts, and an update that read
+// the colors before another one wrote them would put back an older opacity.
+let surfacesQueue: Promise<void> = Promise.resolve();
+// Set once the extension is uninstalled: it keeps running until the extensions restart.
+let uninstalled = false;
+
+export function ensureTransparentSurfaces(context: vscode.ExtensionContext): Promise<void> {
+  surfacesQueue = surfacesQueue.then(() => (uninstalled ? undefined : updateSurfaces(context))).catch((err) => console.error(err));
+  return surfacesQueue;
+}
+
+/** Take out every color the extension added (the user's own stay), for when it is uninstalled. */
+export function removeOwnedColors(context: vscode.ExtensionContext): Promise<void> {
+  uninstalled = true;
+  surfacesQueue = surfacesQueue
+    .then(async () => {
+      const workbench = vscode.workspace.getConfiguration("workbench");
+      const current = workbench.inspect<Record<string, unknown>>("colorCustomizations")?.globalValue ?? {};
+      const owned = context.globalState.get<Record<string, string>>(OWNED_COLORS_KEY, {});
+      const paletteUserKeys = new Set(context.globalState.get<PaletteState>(PALETTE_STATE_KEY)?.userKeys ?? PALETTE_KEYS);
+      const ours = (key: string, value: unknown) => (owned[key] !== undefined && value === owned[key]) || (paletteKeySet.has(key) && !paletteUserKeys.has(key));
+      const next = Object.fromEntries(Object.entries(current).filter(([key, value]) => !ours(key, value)));
+      await context.globalState.update(OWNED_COLORS_KEY, {});
+      await context.globalState.update(PALETTE_STATE_KEY, undefined);
+      if (Object.keys(next).length !== Object.keys(current).length) await workbench.update("colorCustomizations", next, vscode.ConfigurationTarget.Global);
+    })
+    .catch((err) => console.error(err));
+  return surfacesQueue;
+}
+
+/**
+ * Theme from wallpaper owns its colors by key, not by value like the others: every open window
+ * updates the colors, and a value written by one window while another read them would pass for
+ * one of the user's own and stay for good. The keys the user had set before turning it on are
+ * noted once (`userKeys`) and never touched; all the others belong to the palette while it is on.
+ */
+const PALETTE_STATE_KEY = "dokiCarousel.paletteState";
+const PALETTE_MIGRATED_KEY = "dokiCarousel.paletteMigrated";
+interface PaletteState {
+  userKeys: string[];
+}
+const paletteKeySet = new Set(PALETTE_KEYS);
+
+function applyPalette(context: vscode.ExtensionContext, current: Record<string, unknown>, next: Record<string, unknown>): PaletteState | undefined {
+  const on = carouselConfig().get<boolean>("wallpaperTheme", false);
+  let state = context.globalState.get<PaletteState>(PALETTE_STATE_KEY);
+  // Once: earlier development versions tracked the palette by value, and could lose track of it.
+  // If a palette was ever read here, every palette color in the settings is the palette's.
+  if (!context.globalState.get<boolean>(PALETTE_MIGRATED_KEY)) {
+    void context.globalState.update(PALETTE_MIGRATED_KEY, true);
+    const palettesRead = Object.keys(context.globalState.get<Record<string, unknown>>("dokiCarousel.palettes", {})).length > 0;
+    if (!state && palettesRead) state = { userKeys: [] };
+  }
+  // Just turned on: whatever palette key is set now is the user's.
+  if (on && !state) state = { userKeys: PALETTE_KEYS.filter((key) => current[key] !== undefined) };
+  if (!state) return undefined;
+  const userKeys = new Set(state.userKeys);
+  for (const key of PALETTE_KEYS) {
+    if (userKeys.has(key)) continue;
+    const value = on ? paletteColors?.[key] : undefined;
+    if (value !== undefined) next[key] = value;
+    else delete next[key];
+  }
+  // Once off and cleaned up, the palette keys are left alone again.
+  return on ? state : undefined;
+}
+
+async function updateSurfaces(context: vscode.ExtensionContext) {
   const workbench = vscode.workspace.getConfiguration("workbench");
   const current = workbench.inspect<Record<string, unknown>>("colorCustomizations")?.globalValue ?? {};
   // Values we wrote earlier: only these are ever removed, never the user's own colors.
@@ -259,6 +484,8 @@ export async function ensureTransparentSurfaces(context: vscode.ExtensionContext
   const next: Record<string, unknown> = { ...current };
   const nextOwned: Record<string, string> = {};
   const { colors, fallbacks } = wantedColors();
+  // Keys we set before that are no longer wanted at all go too (the palette's: see applyPalette).
+  for (const key of Object.keys(owned)) if (!(key in colors) && !paletteKeySet.has(key)) colors[key] = undefined;
   for (const [key, value] of Object.entries(colors)) {
     const usersOwn = current[key] !== undefined && current[key] !== owned[key];
     if (fallbacks.has(key) && usersOwn) continue;
@@ -269,8 +496,10 @@ export async function ensureTransparentSurfaces(context: vscode.ExtensionContext
       delete next[key];
     }
   }
+  const paletteState = applyPalette(context, current, next);
 
   await context.globalState.update(OWNED_COLORS_KEY, nextOwned);
+  await context.globalState.update(PALETTE_STATE_KEY, paletteState);
   if (JSON.stringify(next) !== JSON.stringify(current)) {
     await workbench.update("colorCustomizations", next, vscode.ConfigurationTarget.Global);
   }
@@ -401,8 +630,11 @@ async function refreshAndRelease(progress: SwitchProgress) {
   }, COOLDOWN_MS);
 }
 
-/** Point Doki to a new image and refresh the window once Doki has installed it. */
-export async function applyWallpaper(imagePath: string): Promise<void> {
+/**
+ * Point Doki to a new image and refresh the window once Doki has installed it. `fix` makes room
+ * for it first, as offered when the images would be too large together (see sizeProblem).
+ */
+export async function applyWallpaper(imagePath: string, fix?: SizeFix): Promise<void> {
   if (switching) return reportBusy();
   const task = currentTask();
   if (task) {
@@ -413,6 +645,9 @@ export async function applyWallpaper(imagePath: string): Promise<void> {
     vscode.window.showErrorMessage(`File not found: ${imagePath}`);
     return;
   }
+  // Checked before any setting changes: Doki would fail and leave the settings pointing at it.
+  const problem = sizeProblem(imagePath, fix);
+  if (problem) return reportSizeProblem(imagePath, problem);
 
   setSwitching(true);
   const progress = createProgress(wallpaperSteps(imagePath));
@@ -421,17 +656,22 @@ export async function applyWallpaper(imagePath: string): Promise<void> {
     const css = workbenchCssPath();
     const signature = imageSignature(imagePath);
     const doki = vscode.workspace.getConfiguration(DOKI_SECTION);
+    // Doki reads its switches when it installs, which only a path change starts (below).
+    if (fix) {
+      await doki.update(ENABLED_KEY[fix.key], false, scopeFor(doki, ENABLED_KEY[fix.key]));
+      if (fix.clear) await doki.update(fix.key, undefined, scopeFor(doki, fix.key));
+    }
     // Applying a wallpaper means showing it, also after Remove wallpaper turned Doki's switch off.
-    let switchedOn = false;
+    let switched = !!fix;
     for (const key of targetKeys()) {
       if (!doki.get<boolean>(ENABLED_KEY[key], true)) {
         await doki.update(ENABLED_KEY[key], true, scopeFor(doki, ENABLED_KEY[key]));
-        switchedOn = true;
+        switched = true;
       }
     }
     // Doki reinstalls only when the path setting changes. The same path needs another spelling
-    // when its content isn't installed yet (the file was replaced) or a switch was just turned on.
-    const rewrite = switchedOn || (!!css && !cssContains(css, signature));
+    // when its content isn't installed yet (the file was replaced) or a switch was just changed.
+    const rewrite = switched || (!!css && !cssContains(css, signature));
     for (const key of targetKeys()) {
       const value = rewrite && doki.get<string>(key) === imagePath ? otherSpelling(imagePath) : imagePath;
       await doki.update(key, value, scopeFor(doki, key));
@@ -440,7 +680,7 @@ export async function applyWallpaper(imagePath: string): Promise<void> {
     // Doki checks its remote assets before writing, which can take a while on a slow network.
     progress.setStage("install");
     const started = Date.now();
-    installed = await waitForCss(css, (text) => text.includes(signature), 30000, switchedOn);
+    installed = await waitForCss(css, (text) => text.includes(signature), 30000, switched);
     const took = Date.now() - started;
     // Skip instant hits (the image was already installed); they say nothing about Doki's speed.
     if (installed && took > 300) {

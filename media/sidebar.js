@@ -21,7 +21,7 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const openById = Object.fromEntries(sections.map((d) => [d.id, d.open]));
-      vscode.setState({ openById, filter: $("filter").value, scrollY: window.scrollY });
+      vscode.setState({ openById, filter: $("filter").value, scrollY: window.scrollY, loopMatch: $("loopMatch").value });
     }, 200);
   }
   sections.forEach((d) => d.addEventListener("toggle", saveView));
@@ -35,7 +35,7 @@
   // A copy, move or conversion running in this window: switching would close the window and stop it.
   let task = "";
   const switchButtons = ["prev", "next", "random"];
-  const taskButtons = ["extract", "convert", "dim", "resetDim", "optimize"];
+  const taskButtons = ["extract", "convert", "optimize"];
 
   function updateLock() {
     const locked = busy || !!task;
@@ -86,13 +86,20 @@
   $("removeWallpaper").onclick = () => state?.wallpaperShown && startSwitch({ type: "removeWallpaper" });
   $("sort").onchange = (e) => send({ type: "sort", value: e.target.value });
 
-  // Links to another section: open it and bring it into view.
+  // Open a section and bring it into view (links in the panel, or the extension's "Optimize…").
+  function openSection(id) {
+    const section = $(id);
+    if (!section) return;
+    section.open = true;
+    // Also its parent section, for one inside another.
+    const parent = section.parentElement?.closest("details");
+    if (parent) parent.open = true;
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   document.querySelectorAll("[data-open]").forEach((link) => {
     /** @type {HTMLElement} */ (link).onclick = (e) => {
       e.preventDefault();
-      const section = $(/** @type {HTMLElement} */ (link).dataset.open);
-      section.open = true;
-      section.scrollIntoView({ behavior: "smooth", block: "start" });
+      openSection(/** @type {HTMLElement} */ (link).dataset.open);
     };
   });
   $("filter").oninput = () => {
@@ -100,11 +107,105 @@
     saveView();
   };
 
-  $("target").onchange = (e) => send({ type: "setOption", key: "target", value: e.target.value });
+  $("target").onchange = (e) => {
+    if (state) state.target = e.target.value;
+    renderTargets();
+    send({ type: "setOption", key: "target", value: e.target.value });
+  };
+
+  // w and b over the preview: a shortcut for "Apply as". Yellow when that image of Doki's shows a
+  // file, ringed when the carousel applies to it (both with "Both").
+  const targetButtons = [...document.querySelectorAll("[data-target]")].map((b) => /** @type {HTMLButtonElement} */ (b));
+  const TARGET_INFO = {
+    wallpaper: "Wallpaper: shows through the code, side bars, panel and terminal",
+    background: "Background: fills the editor area while no file is open",
+  };
+  function renderTargets() {
+    if (!state) return;
+    for (const button of targetButtons) {
+      const target = button.dataset.target || "";
+      const set = !!state.shown?.[target];
+      const selected = state.target === target || state.target === "both";
+      button.classList.toggle("set", set);
+      button.classList.toggle("selected", selected);
+      button.title = `${TARGET_INFO[target]}.\n${set ? "An image is set here." : "No image set here."}${selected ? "" : " Click to apply wallpapers here."}`;
+    }
+    renderOpacity();
+  }
+  for (const button of targetButtons) {
+    button.onclick = () => {
+      const target = button.dataset.target;
+      if (!state || state.target === target) return;
+      state.target = target; // shown right away, before the extension confirms
+      $("target").value = target;
+      renderTargets();
+      send({ type: "setOption", key: "target", value: target });
+    };
+  }
   // Update the label while dragging, save once the slider is released.
   $("quickInputTint").oninput = (e) => ($("quickInputTintValue").textContent = e.target.value);
   $("quickInputTint").onchange = (e) => send({ type: "setOption", key: "quickInputTint", value: Number(e.target.value) });
   $("previewPalette").onclick = () => send({ type: "previewPalette" });
+
+  // The wallpaper follows the slider while it moves (a theme color, no reopen needed). Settings
+  // writes are kept to one every 150 ms, and the last value is sent once the slider is released.
+  // It sets the opacity of the image(s) the carousel applies to (w, b or both, see renderTargets).
+  let opacityTimer = 0;
+  let draggingOpacity = false;
+  const sendOpacity = () => send({ type: "opacity", value: Number($("wallpaperOpacity").value) });
+  const OPACITY_LABEL = { wallpaper: "Wallpaper opacity", background: "Background opacity", both: "Opacity (both)" };
+  function renderOpacity() {
+    if (!state?.opacity) return;
+    $("opacityLabel").textContent = OPACITY_LABEL[state.target] || "Opacity";
+    if (draggingOpacity) return;
+    // With both, they may differ until the slider moves; it starts from the wallpaper's.
+    const value = state.target === "background" ? state.opacity.background : state.opacity.wallpaper;
+    $("wallpaperOpacity").value = value;
+    $("wallpaperOpacityValue").textContent = value;
+  }
+  $("wallpaperOpacity").oninput = (e) => {
+    draggingOpacity = true;
+    $("wallpaperOpacityValue").textContent = e.target.value;
+    // The extension doesn't send the state back for this (see extension.ts), so keep it here.
+    if (state?.opacity) {
+      if (state.target !== "background") state.opacity.wallpaper = Number(e.target.value);
+      if (state.target !== "wallpaper") state.opacity.background = Number(e.target.value);
+    }
+    if (!opacityTimer) {
+      opacityTimer = setTimeout(() => {
+        opacityTimer = 0;
+        sendOpacity();
+      }, 150);
+    }
+  };
+  $("wallpaperOpacity").onchange = () => {
+    draggingOpacity = false;
+    clearTimeout(opacityTimer);
+    opacityTimer = 0;
+    sendOpacity();
+  };
+
+  // Turning it on asks for confirmation first; the state that comes back sets the box.
+  $("wallpaperTheme").onchange = (e) => send({ type: "wallpaperTheme", enabled: e.target.checked });
+
+  // The palette needs an image to come from: without one the box can't be ticked. Once on, it
+  // stays ticked (and can be unticked) while there is none, and the palette comes back with the
+  // next wallpaper.
+  function renderWallpaperTheme() {
+    const source = state.paletteSource === "background" ? "background" : "wallpaper";
+    const hasImage = !!state.shown?.[source];
+    const box = $("wallpaperTheme");
+    box.checked = state.wallpaperTheme;
+    box.disabled = !state.wallpaperTheme && !hasImage;
+    const why = box.disabled ? `Apply a ${source} first: the palette comes from it.` : "";
+    box.title = why;
+    $("wallpaperThemeLabel").title = why;
+    $("wallpaperThemeLabel").classList.toggle("disabled", box.disabled);
+    $("paletteSourceHint").textContent =
+      source === "wallpaper"
+        ? "The palette comes from the wallpaper (w), not from the background (b)."
+        : "The palette comes from the background (b), not from the wallpaper (w), as set in the extension's settings.";
+  }
 
   for (const key of ["includeSubfolders", "wallpaperInEditor", "transparentPanels", "transparentTerminal", "brightenThumbnails"]) {
     $(key).onchange = (e) => send({ type: "setOption", key, value: e.target.checked });
@@ -157,6 +258,11 @@
       const li = document.createElement("li");
       li.textContent = `${i + 1}. ${file.name}`;
       li.title = file.path;
+      // Still clickable: applying it explains why and offers GIF optimization.
+      if (file.tooLarge) {
+        li.classList.add("too-large");
+        li.title += `\n⚠ ${file.tooLarge}`;
+      }
       if (i === state.currentIndex) li.classList.add("current");
       if (busy && file.path === applyingPath) li.classList.add("applying");
       li.onclick = () => startSwitch({ type: "apply", path: file.path }, li);
@@ -196,8 +302,7 @@
   }, { passive: true });
 
   // ------------------------------------------------------------ tools
-  const convertFields = ["fps", "width", "height", "startSeconds", "durationSeconds", "opacity"];
-  $("opacity").oninput = () => ($("opacityValue").textContent = $("opacity").value);
+  const convertFields = ["fps", "width", "height", "startSeconds", "durationSeconds"];
 
   document.querySelectorAll("[data-browse]").forEach((btn) => {
     const field = /** @type {HTMLElement} */ (btn).dataset.browse;
@@ -225,7 +330,7 @@
     send({ type: "convert", options });
   };
 
-  // Files for Set opacity and GIF optimization: the extension opens the dialog and keeps the pick.
+  // Files for GIF optimization: the extension opens the dialog and keeps the pick.
   document.querySelectorAll("[data-pick]").forEach((btn) => {
     const tool = /** @type {HTMLElement} */ (btn).dataset.pick;
     const pick = (e) => {
@@ -242,20 +347,106 @@
     $(`${tool}Files`).title = files.join("\n");
   }
 
-  $("dimOpacity").oninput = () => ($("dimOpacityValue").textContent = $("dimOpacity").value);
-  $("dim").onclick = () =>
-    send({
-      type: "dim",
-      options: { opacity: Number($("dimOpacity").value), destination: $("dimDestination").value.trim() },
-    });
-  $("resetDim").onclick = () => send({ type: "resetDim" });
-
   const optimizeFields = { fps: "optFps", width: "optWidth", height: "optHeight", startSeconds: "optStart", durationSeconds: "optDuration" };
   $("optimize").onclick = () => {
     const options = { destination: $("optDestination").value.trim() };
     for (const [key, id] of Object.entries(optimizeFields)) options[key] = Number($(id).value);
     send({ type: "optimize", options });
   };
+
+  // ------------------------------------------------------------ loops
+  // The extension compares every frame of the one picked GIF with its first frame (loops.ts);
+  // the loops are picked here, so moving the Match slider shows them at once.
+  let loops = { status: "off", seconds: 0, duration: 0, times: [], similarity: [] };
+  $("loopMatch").value = String(saved.loopMatch || 97);
+
+  /**
+   * Frame indexes where a loop ends: the best match of each stretch that comes back to the Match
+   * level, once the animation has clearly moved away from its first frame (or the frames right
+   * after the first, still alike, would all count).
+   */
+  function loopPoints(similarity, match) {
+    const leave = match - Math.max(0.02, 1 - match);
+    const points = [];
+    let near = true;
+    let best = -1;
+    for (let i = 1; i < similarity.length; i++) {
+      if (near) {
+        near = similarity[i] >= leave;
+        continue;
+      }
+      if (similarity[i] >= match) {
+        if (best === -1 || similarity[i] > similarity[best]) best = i;
+      } else if (best !== -1) {
+        points.push(best);
+        best = -1;
+        near = similarity[i] >= leave;
+      }
+    }
+    if (best !== -1) points.push(best);
+    return points;
+  }
+
+  const seconds = (value) => Math.max(0, Math.round(value * 1000) / 1000);
+
+  /** The part Start and Duration keep, shaded on the track. */
+  function renderLoopRange() {
+    const length = loops.duration;
+    const range = $("loopRange");
+    range.style.display = length ? "" : "none";
+    if (!length) return;
+    const start = Math.min(length, Math.max(0, Number($("optStart").value) || 0));
+    const duration = Number($("optDuration").value) || 0;
+    const end = duration > 0 ? Math.min(length, start + duration) : length;
+    range.style.left = `${(start / length) * 100}%`;
+    range.style.width = `${(Math.max(0, end - start) / length) * 100}%`;
+  }
+
+  function renderLoops() {
+    $("loops").hidden = loops.status === "off";
+    if (loops.status === "off") return;
+    const match = $("loopMatch").value;
+    $("loopMatchValue").textContent = match;
+    $("loopLength").textContent = loops.duration ? `${loops.duration.toFixed(2)} s` : "";
+    const track = $("loopTrack");
+    track.querySelectorAll(".loop-dot").forEach((dot) => dot.remove());
+
+    const status = {
+      running: `– reading the GIF… ${Math.floor(loops.seconds)} s`,
+      noFfmpeg: "– finding them needs ffmpeg",
+      failed: "– this GIF could not be read",
+      still: "– this GIF barely moves",
+    };
+    if (loops.status !== "done") {
+      $("loopStatus").textContent = status[loops.status] || "";
+      renderLoopRange();
+      return;
+    }
+    const points = loopPoints(loops.similarity, Number(match) / 100);
+    $("loopStatus").textContent = points.length ? `– ${points.length} found` : `– none at ${match}% (lower Match finds looser ones)`;
+    points.forEach((index, k) => {
+      const start = k ? loops.times[points[k - 1]] : 0;
+      const end = loops.times[index];
+      const dot = document.createElement("button");
+      dot.className = "loop-dot";
+      dot.style.left = `${(end / loops.duration) * 100}%`;
+      dot.title = `Loop ${k + 1}: ${start.toFixed(2)} → ${end.toFixed(2)} s, ${(loops.similarity[index] * 100).toFixed(1)}% match. Click to keep just this loop.`;
+      dot.onclick = (e) => {
+        e.preventDefault();
+        $("optStart").value = seconds(start);
+        // Stop just before the frame that starts the next loop.
+        $("optDuration").value = seconds(end - start - 0.001);
+        renderLoopRange();
+      };
+      track.appendChild(dot);
+    });
+    renderLoopRange();
+  }
+
+  $("loopMatch").oninput = renderLoops;
+  $("loopMatch").onchange = saveView;
+  $("optStart").addEventListener("input", renderLoopRange);
+  $("optDuration").addEventListener("input", renderLoopRange);
 
   // ------------------------------------------------------------ messages
   let toolsInitialized = false;
@@ -285,6 +476,11 @@
       setTask(data.task);
       return;
     }
+    if (data.type === "loops") {
+      loops = data;
+      renderLoops();
+      return;
+    }
     if (data.type !== "state") return;
     state = data;
     if (state.busy) {
@@ -298,15 +494,17 @@
     $("sort").value = state.sortBy === "random" ? "random" : `${state.sortBy}:${state.sortOrder}`;
     $("reshuffle").style.display = state.sortBy === "random" ? "" : "none";
     $("target").value = state.target;
+    renderTargets();
     $("includeSubfolders").checked = state.includeSubfolders;
     updateLock();
+    renderOpacity();
     $("quickInputTint").value = state.quickInputTint;
     $("quickInputTintValue").textContent = state.quickInputTint;
     $("transparentPanels").checked = state.transparentPanels;
     $("transparentTerminal").checked = state.transparentTerminal;
     $("wallpaperInEditor").checked = state.wallpaperInEditor;
     $("brightenThumbnails").checked = state.brightenThumbnails;
-    showPicked("dim", state.dimFiles);
+    renderWallpaperTheme();
     showPicked("optimize", state.optimizeFiles);
 
     const total = state.files.length;
@@ -320,16 +518,13 @@
       window.scrollTo(0, pendingScroll);
       pendingScroll = 0;
     }
+    if (state.openSection) openSection(state.openSection);
 
     // Only fill the tool forms once, so a state refresh doesn't wipe what the user is typing.
     if (!toolsInitialized) {
       toolsInitialized = true;
       for (const f of convertFields) $(f).value = state.convert[f];
-      $("opacityValue").textContent = state.convert.opacity;
       $("convertDestination").value = state.convert.destination || "";
-      $("dimOpacity").value = state.dim.opacity;
-      $("dimOpacityValue").textContent = state.dim.opacity;
-      $("dimDestination").value = state.dim.destination || "";
       for (const [key, id] of Object.entries(optimizeFields)) $(id).value = state.optimize[key];
       $("optDestination").value = state.optimize.destination || "";
       $("extractSource").value = state.extractSource;

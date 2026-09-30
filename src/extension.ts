@@ -1,15 +1,18 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import { Carousel } from "./carousel";
-import { applyWallpaper, ensureCssOverrides, ensureTerminalReadable, ensureTransparentSurfaces, initSwitching, isSwitching, removeWallpaper, reopenToApply } from "./doki";
-import { WALLPAPER_FILTER } from "./formats";
+import { applyWallpaper, ensureCssOverrides, ensureTerminalReadable, ensureTransparentSurfaces, formatSize, imageRoom, initSwitching, removeWallpaper, reopenToApply, tooLargeReason } from "./doki";
+import { checkThemeConflict, initPaletteTheme, refreshPaletteTheme } from "./paletteTheme";
 import { SidebarProvider } from "./sidebar";
 import { Thumbnails } from "./thumbnails";
-import { extractMp4, initTools, resetDimming } from "./tools";
+import { extractMp4, initTools } from "./tools";
+import { watchUninstall } from "./uninstallPrompt";
 
 export function activate(context: vscode.ExtensionContext) {
   initSwitching(context);
   initTools(context);
+  watchUninstall(context);
+  initPaletteTheme(context);
   const carousel = new Carousel(context);
   const sidebar = new SidebarProvider(context, carousel, new Thumbnails(context));
 
@@ -49,10 +52,23 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration("dokiCarousel.fixTerminalText") || e.affectsConfiguration("terminal.integrated.gpuAcceleration")) {
         ensureTerminalReadable();
       }
-      // A new theme also means a new color for the terminal without the wallpaper.
-      if (["transparentTerminal", "transparentPanels", "quickInputTint"].some((k) => e.affectsConfiguration(`dokiCarousel.${k}`)) || e.affectsConfiguration("workbench.colorTheme")) {
+      // A new theme also means a new color for the terminal without the wallpaper; the dimming
+      // follows Doki's switches.
+      if (
+        ["transparentTerminal", "transparentPanels", "quickInputTint", "wallpaperOpacity", "backgroundOpacity"].some((k) => e.affectsConfiguration(`dokiCarousel.${k}`)) ||
+        ["wallpaper.enabled", "background.enabled"].some((k) => e.affectsConfiguration(`doki.${k}`)) ||
+        e.affectsConfiguration("workbench.colorTheme")
+      ) {
         ensureTransparentSurfaces(context);
       }
+      // Theme from wallpaper follows the image its palette comes from.
+      if (
+        ["wallpaperTheme", "paletteSource"].some((k) => e.affectsConfiguration(`dokiCarousel.${k}`)) ||
+        ["wallpaper.path", "background.path", "wallpaper.enabled", "background.enabled"].some((k) => e.affectsConfiguration(`doki.${k}`))
+      ) {
+        refreshPaletteTheme();
+      }
+      if (e.affectsConfiguration("workbench.colorTheme")) checkThemeConflict();
       if (e.affectsConfiguration("dokiCarousel.wallpaperInEditor") || e.affectsConfiguration("dokiCarousel.transparentTerminal")) {
         // The terminal changes right away through its color; the editor needs the new stylesheet.
         // Every open window gets this event: the first one writes the file, the focused one reopens.
@@ -61,7 +77,9 @@ export function activate(context: vscode.ExtensionContext) {
           reopenToApply("Wallpaper in editors");
         }
       }
-      if (e.affectsConfiguration("dokiCarousel") || ["wallpaper.path", "background.path", "wallpaper.enabled", "background.enabled"].some((k) => e.affectsConfiguration(`doki.${k}`))) {
+      // The opacity slider writes its setting many times while it moves; the list stays as it is.
+      const onlyOpacity = e.affectsConfiguration("dokiCarousel.wallpaperOpacity") || e.affectsConfiguration("dokiCarousel.backgroundOpacity");
+      if ((e.affectsConfiguration("dokiCarousel") && !onlyOpacity) || ["wallpaper.path", "background.path", "wallpaper.enabled", "background.enabled"].some((k) => e.affectsConfiguration(`doki.${k}`))) {
         carousel.refresh();
       }
     }),
@@ -74,8 +92,17 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("dokiCarousel.pick", async () => {
       const files = carousel.files();
       const current = carousel.currentIndex();
+      const room = imageRoom();
       const picked = await vscode.window.showQuickPick(
-        files.map((f, i) => ({ label: `${i === current ? "$(check) " : ""}${f.name}`, description: `${(f.size / 1048576).toFixed(1)} MB`, path: f.path })),
+        files.map((f, i) => {
+          const tooLarge = tooLargeReason(f.size, room);
+          return {
+            label: `${i === current ? "$(check) " : ""}${f.name}`,
+            description: `${tooLarge ? "$(warning) " : ""}${formatSize(f.size)}`,
+            detail: tooLarge || undefined,
+            path: f.path,
+          };
+        }),
         { placeHolder: "Choose a wallpaper", matchOnDescription: true }
       );
       if (picked) await applyWallpaper(picked.path);
@@ -108,39 +135,24 @@ export function activate(context: vscode.ExtensionContext) {
       await extractMp4({ source: source[0].fsPath, destination: destination[0].fsPath, move: mode === "Move" });
     }),
 
-    // The conversion, opacity and optimization options live in the sidebar form.
+    // The conversion and optimization options live in the sidebar form.
     vscode.commands.registerCommand("dokiCarousel.convertMp4", () => vscode.commands.executeCommand("dokiCarousel.panel.focus")),
-    vscode.commands.registerCommand("dokiCarousel.setOpacity", () => vscode.commands.executeCommand("dokiCarousel.panel.focus")),
-    vscode.commands.registerCommand("dokiCarousel.optimizeGifs", () => vscode.commands.executeCommand("dokiCarousel.panel.focus")),
-
-    vscode.commands.registerCommand("dokiCarousel.resetOpacity", async () => {
-      // Don't ask for files when the window is about to close anyway.
-      if (isSwitching()) {
-        vscode.window.setStatusBarMessage("$(sync~spin) A wallpaper is being applied, try again once the window has reopened.", 3000);
-        return;
-      }
-      const folder = vscode.workspace.getConfiguration("dokiCarousel").get<string>("folder");
-      const files = await vscode.window.showOpenDialog({
-        canSelectMany: true,
-        filters: { Wallpapers: WALLPAPER_FILTER },
-        openLabel: "Reset opacity",
-        defaultUri: folder ? vscode.Uri.file(folder) : undefined,
-      });
-      if (!files?.length) return;
-      await resetDimming(files.map((f) => f.fsPath));
-      carousel.refresh();
-    })
+    // Called with the GIFs to pick when a wallpaper is too large (see doki.ts).
+    vscode.commands.registerCommand("dokiCarousel.optimizeGifs", (files?: unknown) =>
+      sidebar.openTool("optimize", Array.isArray(files) ? files.filter((f): f is string => typeof f === "string") : undefined)
+    )
   );
 
   updateStatusBar();
   ensureTerminalReadable();
   ensureTransparentSurfaces(context);
-  // A VS Code update installs a fresh stylesheet without our CSS. Checked a bit later, so Doki
-  // is done reinstalling its wallpaper first (it rewrites the same file).
+  // A VS Code update installs a fresh stylesheet without our CSS, and a new version of the
+  // extension may bring a new block. Checked a bit later, so Doki is done reinstalling its
+  // wallpaper first (it rewrites the same file).
   setTimeout(async () => {
     if (ensureCssOverrides() !== "changed") return;
     const choice = await vscode.window.showInformationMessage(
-      "Wallpaper Carousel updated VS Code's stylesheet to match your Appearance settings (it was probably reset by an update). Reopen the window to see it.",
+      "Wallpaper Carousel updated VS Code's stylesheet, which the wallpaper opacity slider and the Appearance settings need (after an update of VS Code or of the extension). Reopen the window to use them.",
       "Reopen Window"
     );
     if (choice) reopenToApply("Appearance settings");

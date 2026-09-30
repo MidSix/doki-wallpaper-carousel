@@ -3,8 +3,8 @@ import * as path from "path";
 import * as crypto from "crypto";
 
 // Doki paints the wallpaper as a background image with `!important` on the editor and terminal
-// elements themselves, so no theme color can cover it there. To hide it in one of those areas,
-// a small CSS block of ours goes into the same VS Code stylesheet Doki writes to.
+// elements themselves, so no theme color can cover it there. To dim it, or hide it in one of those
+// areas, a small CSS block of ours goes into the same VS Code stylesheet Doki writes to.
 // No vscode import: the uninstall script (uninstall.ts) uses this too.
 
 const START = "/* Wallpaper Carousel for Doki Theme: start */";
@@ -45,6 +45,60 @@ const EDITOR_SELECTORS = [
 ];
 const TERMINAL_SELECTORS = [".terminal .xterm", ".terminal-wrapper", ".xterm .xterm-screen canvas", ".xterm-cursor-layer"];
 
+// Every element Doki paints the wallpaper on (Doki's buildWallpaperCss), and the ones among them
+// it clears again. Doki's generic `.content` also covers the empty editor area, and so its background.
+const DOKI_WALLPAPER_SELECTORS = [
+  `[id="workbench.parts.editor"] .split-view-view .editor-container .editor-instance>.monaco-editor .overflow-guard>.monaco-scrollable-element::before`,
+  ".overflow-guard",
+  ".tab",
+  ".settings-editor>.settings-body .settings-toc-container",
+  ".tabs-container",
+  ".monaco-pane-view",
+  ".composite.title",
+  ".editor-container",
+  "button.getting-started-category",
+  "div.header",
+  ".content",
+  ".terminal .xterm",
+  ".monaco-workbench .pane-body.integrated-terminal .terminal-wrapper",
+  ".xterm .xterm-screen canvas",
+  ".monaco-select-box",
+  ".pane-header",
+  ".minimap-decorations-layer",
+  ".xterm-cursor-layer",
+  ".monaco-breadcrumbs",
+  ".monaco-editor .sticky-line-content",
+  ".monaco-editor .sticky-line-number",
+  ".monaco-list .monaco-scrollable-element .monaco-tree-sticky-container .monaco-tree-sticky-row.monaco-list-row",
+  ".decorationsOverviewRuler",
+  ".monaco-workbench .part.editor>.content .editor-group-container>.title .tabs-breadcrumbs .breadcrumbs-control",
+  ".ref-tree",
+  ".head",
+  ".monaco-workbench .part.editor>.content .editor-group-container>.title .editor-actions",
+  ".welcomePageFocusElement",
+];
+const DOKI_CLEARED_SELECTORS = [
+  `[id="workbench.view.explorer"] .monaco-list-rows`,
+  `[id="workbench.view.explorer"] .pane-header`,
+  `[id="workbench.view.explorer"] .monaco-pane-view`,
+  `[id="workbench.view.explorer"] .split-view-view`,
+  `[id="workbench.view.explorer"] .monaco-tl-twistie`,
+  `[id="terminal"] .pane-header`,
+  `[id="terminal"] .monaco-pane-view`,
+  ".explorer-folders-view > .monaco-list > .monaco-scrollable-element > .monaco-list-rows",
+  ".show-file-icons > .monaco-list > .monaco-scrollable-element > .monaco-list-rows",
+  ".extensions-list > .monaco-list > .monaco-scrollable-element > .monaco-list-rows",
+  "div.details .header-container .header",
+  ".monaco-workbench .part.editor>.content .gettingStartedContainer .gettingStartedSlideCategories>.gettingStartedCategoriesContainer>.header",
+  ".monaco-workbench .part.editor>.content .gettingStartedContainer .gettingStartedSlideCategories .getting-started-category",
+];
+/** CSS variables of the colors the extension contributes for the dimming (package.json). */
+const DIM_VARIABLE = "--vscode-dokiCarousel-wallpaperDim";
+const BACKGROUND_DIM_VARIABLE = "--vscode-dokiCarousel-backgroundDim";
+// The one element Doki paints its other image, the background, on (Doki's buildBackgroundCss).
+// It never shows the wallpaper: Doki clears it there while the background is off.
+const DOKI_BACKGROUND_SELECTOR = ".monaco-workbench .part.editor > .content";
+
 export interface Overrides {
   /** Show the wallpaper in the editor area. */
   editor: boolean;
@@ -53,17 +107,39 @@ export interface Overrides {
 }
 
 // Doki's rules use classes only; `:not(#dc)` adds the weight of an id, so ours win over them.
-function hide(scope: string, selectors: string[]): string {
-  const list = selectors.map((s) => {
-    const [element, pseudo] = s.split("::");
-    return `${scope} ${element}:not(#dc)${pseudo ? `::${pseudo}` : ""}`;
-  });
-  return `${list.join(",\n")} {\n  background-image: none !important;\n}`;
+function weighted(scope: string, selectors: string[]): string {
+  return selectors
+    .map((s) => {
+      const [element, pseudo] = s.split("::");
+      return `${scope} ${element}:not(#dc)${pseudo ? `::${pseudo}` : ""}`.trim();
+    })
+    .join(",\n");
 }
 
-/** Our CSS block for these settings; empty when the wallpaper is shown everywhere. */
+function hide(scope: string, selectors: string[]): string {
+  return `${weighted(scope, selectors)} {\n  background-image: none !important;\n  box-shadow: none !important;\n}`;
+}
+
+/**
+ * Wallpaper opacity that changes while the window is open. An inset shadow is painted over an
+ * element's background image but under its content, so a translucent black one darkens the
+ * wallpaper and not the text. Its color is a theme color of ours, which VS Code updates in the
+ * open window as soon as it changes in workbench.colorCustomizations; the stylesheet itself only
+ * loads when a window opens. Elements Doki clears again show their parent, already darkened.
+ * The background has a color of its own, so each image can have its own opacity; its selector
+ * is more specific than Doki's generic `.content`, so its rule wins there.
+ */
+function dimRules(): string[] {
+  return [
+    `${weighted("", DOKI_WALLPAPER_SELECTORS)} {\n  box-shadow: inset 0 0 0 100vmax var(${DIM_VARIABLE}, transparent) !important;\n}`,
+    `${weighted("", DOKI_CLEARED_SELECTORS)} {\n  box-shadow: none !important;\n}`,
+    `${weighted("", [DOKI_BACKGROUND_SELECTOR])} {\n  box-shadow: inset 0 0 0 100vmax var(${BACKGROUND_DIM_VARIABLE}, transparent) !important;\n}`,
+  ];
+}
+
+/** Our CSS block for these settings. */
 export function overridesCss(o: Overrides): string {
-  const rules: string[] = [];
+  const rules: string[] = dimRules();
   if (!o.editor) {
     rules.push(hide(".monaco-workbench .part.editor", EDITOR_SELECTORS));
     // See-through parts of an open editor (the breadcrumbs bar) would now show the background of
@@ -71,7 +147,7 @@ export function overridesCss(o: Overrides): string {
     rules.push(`.monaco-workbench .part.editor .editor-group-container:not(.empty):not(#dc) {\n  background-color: var(--vscode-editor-background) !important;\n}`);
   }
   if (!o.terminal) rules.push(hide(".monaco-workbench", TERMINAL_SELECTORS));
-  return rules.length ? `${START}\n${rules.join("\n")}\n${END}` : "";
+  return `${START}\n${rules.join("\n")}\n${END}`;
 }
 
 /** The stylesheet without our block, exactly as it was before it was added. */

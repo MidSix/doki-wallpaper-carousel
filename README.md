@@ -1,13 +1,13 @@
 # Wallpaper Carousel for Doki Theme
 
 **An unofficial companion for the [Doki Theme](https://marketplace.visualstudio.com/items?itemName=unthrottled.doki-theme).**
-Keep a folder of wallpapers (animated GIFs, PNG, JPG, WebP, AVIF and more) and flip through them with two arrows, choose where the wallpaper shows (editors, side bars, panel, terminal, command palette), turn your `.mp4` videos into GIF wallpapers and darken the wallpapers you already have, without leaving VS Code.
+Keep a folder of wallpapers (animated GIFs, PNG, JPG, WebP, AVIF and more) and flip through them with two arrows, choose where the wallpaper shows (editors, side bars, panel, terminal, command palette), darken any wallpaper live with a slider, let VS Code take its colors from the wallpaper, make big GIFs lighter (and find where they loop) and turn your `.mp4` videos into GIF wallpapers, without leaving VS Code.
 
 ![Browsing the panel and applying a wallpaper](images/hero.gif)
 
 <sub>The animations on this page are encoded at 5 frames per second so they load quickly, which is why they look choppy; the extension itself runs smoothly. Waiting times (Doki installing the image, the window reopening, a conversion running) are also sped up.</sub>
 
-> Doki Theme does all the heavy lifting: it draws the wallpaper. This extension only tells Doki *which* image to use and adjusts a few VS Code colors so the wallpaper can show through (or not, where you turn it off). It contains no Doki Theme code and is not affiliated with the Doki Theme project.
+> Doki Theme does all the heavy lifting: it draws the wallpaper. This extension only tells Doki *which* image to use and adjusts a few VS Code colors so the wallpaper can show through (or not, where you turn it off), dimmed as much as you like, and, if you want, in matching colors. It contains no Doki Theme code and is not affiliated with the Doki Theme project.
 
 ---
 
@@ -35,13 +35,15 @@ Above the list, **Filter** narrows it down by name and **Sort by** orders it: by
 - A preview of the current wallpaper and an `n / N` counter. For an animation the preview is a still frame, not the animated file, so the panel stays light even with 100 MB wallpapers.
 - A **✕** in the corner of the preview removes the wallpaper from VS Code (also available as the *Remove Wallpaper* command). Unlike Doki's *Remove Sticker/Background*, it keeps Doki's stickers. It is greyed out while no wallpaper is set; applying any wallpaper brings one back.
 - A list you can filter and sort: click a name to apply it. The list shows 12 rows and scrolls, so it stays usable with hundreds of wallpapers.
-- Short explanations right in the panel, such as a reminder to darken bright wallpapers with *Set opacity* before using them, and what *Wallpaper* and *Background* mean.
+- **w** and **b** buttons in the other corner choose whether the carousel sets Doki's *wallpaper* or its *background*, and turn yellow where an image is set (see [Wallpaper or background?](#-wallpaper-or-background)).
+- An **Opacity** slider that darkens the wallpaper live (see [below](#-wallpaper-opacity-live)), and a **Theme from wallpaper** box that colors VS Code after it (see [below](#-theme-from-wallpaper)).
+- Short explanations right in the panel, such as what *Wallpaper* and *Background* mean.
 - **Instant hover previews**: hovering a name shows a still frame of that wallpaper (the middle frame of an animation). Previews are generated once in the background with ffmpeg and cached, so hovering never has to decode a 100 MB animated GIF. Files ffmpeg can't read (animated WebP) are shown as they are. Dimmed wallpapers (blended with a dark background so code stays readable) are **brightened in the preview only**, so you can still tell them apart; the file itself is never changed.
 
 
 ### 🪟 Wallpaper or background?
 
-Doki has two images, and **Apply as** in the panel's **Folder** section chooses which one the carousel sets:
+Doki has two images, and **Apply as** in the panel's **Folder** section chooses which one the carousel sets. The **w** and **b** buttons in the top left corner of the preview do the same in one click: the chosen one has a grey ring (both with *Both*), and each turns yellow while that image shows a file, so you can tell at a glance what is set where.
 
 | | Where it shows |
 | --- | --- |
@@ -50,6 +52,16 @@ Doki has two images, and **Apply as** in the panel's **Folder** section chooses 
 | **Both** | The same image in both places. |
 
 So with a file open, applying an image as *Background* seems to do nothing: close all editors to see it. Doki also has an on/off switch for each image (`doki.wallpaper.enabled`, `doki.background.enabled`); if a switch was off, applying an image turns it on, so what you apply always shows.
+
+### 📏 How large a wallpaper can be
+
+VS Code can load **up to 360 MB of images, wallpaper and background together**. Doki puts both images inside VS Code's stylesheet as text, and JavaScript can't build a text longer than about 512 million characters, which is room for about 384 MB of images; 360 MB leaves a margin for the rest of the stylesheet. The limit is part of VS Code itself, so it is the same on every computer; it doesn't depend on your memory or hardware.
+
+- A 300 MB wallpaper leaves room for a 60 MB background (or none with the background switched off).
+- Applied as **Both**, the same image counts twice, so it can be up to 180 MB.
+- Doki reads the file of a switched-off image too, so that file must be under 360 MB on its own.
+
+Files that don't fit are marked with ⚠ in the list (the tooltip says why) and skipped by the arrows and *Random*. Clicking one explains the problem and offers to open **GIF optimization** with the file already picked, or to switch off the other image to make room. Well below the limit is better anyway: VS Code reads the whole stylesheet every time a window opens, so a 300 MB GIF makes every window slower to start.
 
 ### 🌌 Choose where the wallpaper shows
 
@@ -80,7 +92,6 @@ Both video tools live together in the panel's **.mp4 videos** section.
 | --- | --- |
 | FPS | Frames per second of the GIF (lower = smaller file) |
 | Width / Height | Output size; height `-1` keeps the aspect ratio |
-| Video opacity | How visible the video is over black: 25 = a dark, faint video, 100 = unchanged. Keeps wallpapers dark enough to read code on |
 | Start / Duration | Cut a fragment of the video instead of converting all of it |
 | Destination | Output folder (empty = next to each video) |
 
@@ -94,26 +105,24 @@ The new GIF shows up in the list right away, ready to apply:
 
 ![Finding the new GIF and applying it](images/convert-apply.gif)
 
-### 🌗 Darken the wallpapers you already have
+### 🔅 Wallpaper opacity, live
 
-Most wallpapers you download (GIF, PNG, JPG, …) are too bright to read code over. **Set opacity** darkens them with the same *opacity over black* as the video conversion:
+Most wallpapers you download (GIF, PNG, JPG, …) are too bright to read code over. The **Opacity** slider at the top of the panel's *Wallpapers* section darkens whatever wallpaper is shown (100 = as the file is, lower = darker), **while you drag it**: no window reopening, and the files are never changed. It applies to every wallpaper you switch to afterwards.
 
-1. **Files**: click *…* and pick one or many wallpapers.
-2. **Opacity**: 25 = dark and faint, 100 = unchanged. The lowest is 5 %, so a file never turns completely black.
-3. **Destination folder**: where the darker versions go, with the same names. Empty, or the folder the files come from, means **replacing them**: no copy is made, so your folder doesn't fill up with duplicates. Choose another folder to keep the originals.
+Doki's wallpaper and its background (the empty editor area) each keep **their own opacity**. The slider sets the one chosen with **w** / **b** on the preview, and says which (*Wallpaper opacity*, *Background opacity*); with *Both* chosen it sets both to the same value.
 
-Whenever a file would be replaced or overwritten, a confirmation dialog of your system says so first.
+It works with a thin black layer that the extension's CSS block puts over Doki's wallpaper, under the text (see [the one file it changes](#the-one-file-it-changes)). The block is installed once, and the window reopens to load it the first time; from then on the slider only changes a color. It can only darken: a wallpaper can't get brighter than its file.
 
-- Format, size, animation, frame timing and transparent areas are kept: GIFs get a new 256-color palette, animated GIF, PNG and AVIF files keep every frame, and PNG, WebP and ICO files keep their transparency.
-- The only exception is **animated WebP**, which ffmpeg can't read: those files are skipped and reported.
-- Setting the opacity again darkens further (50 % of 50 % = 25 %).
-- Each new version is rendered aside and only written once it is complete, so a failure or a cancel leaves the file as it was.
-- **If your current wallpaper is among the files replaced, it is loaded again automatically** once all of them are done, so you see the darker version right away.
-- Like conversions, it shows a cancellable progress notification and pauses wallpaper switching until it finishes.
+### 🎨 Theme from wallpaper
 
-Darkened wallpapers are brightened in the hover previews (only there), so they are still easy to recognize.
+Tick **Theme from wallpaper** at the top of the *Wallpapers* section (it is off by default, and can only be ticked while a wallpaper is set) and VS Code takes its colors from your wallpaper (not from the background, unless you choose it in the settings, see below): a black and red wallpaper gives a theme of near-black surfaces with crimson accents (buttons, badges, the active tab, the cursor, selections, links, the status bar). It follows the wallpaper: switch to another one and the colors change with it, without reopening the window.
 
-**Reset opacity…** brightens files darkened with *Set opacity* back, replacing them after asking (and reloading the current wallpaper if it is one of them). The extension remembers the total opacity it gave each file, so it knows how much to brighten. The result is close to the original but not identical: darkening is not a layer that can be peeled off, every pixel lost some of its color levels (more the lower the opacity was). Files not changed with *Set opacity*, or edited since, are left alone. For a GIF converted from a video, convert the `.mp4` again at 100 %.
+- **How the palette is found**: a few frames of the wallpaper (one for a still image) are read small with ffmpeg and their colors grouped into the six main ones. Darkened wallpapers are brightened first, so their real hues come out. The main color tints the surfaces, the most colorful one that covers a fair part of the picture becomes the accent, and another hue the secondary color.
+- **Always readable**: the theme is always dark, since code sits on the wallpaper, and every text color is checked for contrast (WCAG) and made lighter until it reads well.
+- **It replaces your theme**: turning it on asks first, then switches VS Code to its own dark theme and lays the palette over it, so Doki's colors don't mix in. Doki's wallpapers and stickers stay. Don't pick a Doki theme while it is on (the extension offers to turn it off if you do).
+- **Turning it off**: untick the box, or remove the wallpaper: without one there is no palette. VS Code keeps its own theme without the palette's colors; pick a Doki theme again in *Preferences: Color Theme* if you want one.
+- Colors you set yourself in `workbench.colorCustomizations` are never replaced.
+- **From the background instead**: the palette comes from the *wallpaper* by default. To take it from the *background* (the empty editor's image), set `dokiCarousel.paletteSource` to `background` in the extension's settings.
 
 ### 🪶 Make GIFs lighter
 
@@ -127,7 +136,11 @@ Big GIFs make Doki and VS Code slower to load. **GIF optimization** re-encodes G
 | Start / Duration | Keep only a fragment; duration `0` = up to the end |
 | Destination folder | Where the optimized GIFs go. Empty, or the GIFs' own folder, replaces them (after asking) |
 
-For example, 10 FPS at 320 px wide turned a 1.3 MB test GIF into 290 KB. As with *Set opacity*, the current wallpaper is loaded again automatically when it is replaced, and a GIF darkened with *Set opacity* can still be reset after it is optimized.
+For example, 10 FPS at 320 px wide turned a 1.3 MB test GIF into 290 KB. Each GIF is rendered aside and only written once it is complete, so a failure or a cancel leaves the file as it was, and **if your current wallpaper is replaced, it is loaded again automatically**.
+
+**Find the loops.** A wallpaper plays over and over, so many GIFs hold the same animation several times, or end with a few frames that repeat the start and make it stutter. With **one** GIF picked, the extension reads it (a few seconds, even for a 270 MB GIF) and a **Loops** track appears under *Start* and *Duration*: each yellow dot is where the animation is back at its first frame, so the loop that began at the previous dot (or at the start) ends there. Click a dot to fill *Start* and *Duration* with just that loop; the track shades the part that will be kept.
+
+Frames rarely come back exactly the same (a particle, a flicker), so the **Match** slider sets how alike they must be: 97 % means 97 % of the moving parts of the picture are back where they started. The still background doesn't count, or every frame would match. Lower it to find looser loops, raise it for exact ones.
 
 ### 📦 Collect scattered videos into one folder
 
@@ -148,7 +161,7 @@ Duplicates are detected by content (file size plus samples from the start, middl
 
 - **VS Code 1.85** or newer.
 - **[Doki Theme](https://marketplace.visualstudio.com/items?itemName=unthrottled.doki-theme)**, installed automatically as a dependency, with a Doki theme active and its wallpaper enabled (`doki.wallpaper.enabled`).
-- **[ffmpeg](https://ffmpeg.org/download.html)** (with `ffprobe`), for hover previews and video conversion. Everything else works without it.
+- **[ffmpeg](https://ffmpeg.org/download.html)** (with `ffprobe`), for hover previews, video conversion, GIF optimization and its loops, and Theme from wallpaper. Everything else works without it.
 
   | OS | Install |
   | --- | --- |
@@ -167,7 +180,7 @@ Works on **Windows, macOS and Linux**. Doki Theme must be able to write to VS Co
 3. Click **Set wallpaper folder…** and choose your wallpapers folder.
 4. Use the arrows ◀ ▶, or click any wallpaper in the list.
 
-> **Tip:** wallpapers that look good *behind code* are dark or dimmed. When converting, try **Video opacity 25–40**; for wallpapers you already have, use **Set opacity** with the same values.
+> **Tip:** wallpapers look good *behind code* when they are dark. Try the **Opacity** slider at 25–40 %.
 
 ## How switching works (and why the window reopens)
 
@@ -177,7 +190,7 @@ Works on **Windows, macOS and Linux**. Doki Theme must be able to write to VS Co
 
 While this happens, a progress bar appears where the command palette opens, with the current step and an estimate of the time left (it learns how long Doki takes on your machine). Only one wallpaper can be applied at a time: extra clicks, arrows or shortcuts are ignored until the window reopens, so clicking a wallpaper ten times never opens ten windows. If for some reason the window does not close, the carousel unlocks again after a few seconds.
 
-Switching is also paused while `.mp4` files are being copied, moved or converted to GIF, or wallpapers are being darkened or restored, in that window, because reopening the window would stop them halfway. The panel shows what is running, and you can switch again as soon as it finishes. Likewise, a copy or conversion can't be started while a wallpaper is being applied.
+Switching is also paused while `.mp4` files are being copied, moved or converted to GIF, or GIFs are being optimized, in that window, because reopening the window would stop them halfway. The panel shows what is running, and you can switch again as soon as it finishes. Likewise, a copy or conversion can't be started while a wallpaper is being applied.
 
 A plain *Reload Window* is not enough: installed VS Code caches its stylesheet per window, so a reload keeps showing the previous wallpaper. A fresh window reads the new one, which is why the extension always reopens the window.
 
@@ -195,9 +208,7 @@ If your workspace defines its own `doki.wallpaper.path`, the extension updates i
 | Wallpaper Carousel: Set Wallpaper Folder... | |
 | Wallpaper Carousel: Extract .mp4 Files From Folder Tree... | |
 | Wallpaper Carousel: Convert .mp4 to GIF... | |
-| Wallpaper Carousel: Set Wallpaper Opacity... | |
 | Wallpaper Carousel: Optimize GIFs... | |
-| Wallpaper Carousel: Reset Wallpaper Opacity... | |
 
 ## Settings
 
@@ -214,6 +225,10 @@ If your workspace defines its own `doki.wallpaper.path`, the extension updates i
 | `dokiCarousel.transparentPanels` | `true` | Show the wallpaper behind both side bars and the bottom panel. |
 | `dokiCarousel.transparentTerminal` | `true` | Show the wallpaper behind the terminal text. When off, the terminal gets the theme's background color. |
 | `dokiCarousel.fixTerminalText` | `true` | Keep terminal text visible over the wallpaper (see below). |
+| `dokiCarousel.wallpaperTheme` | `false` | Theme from wallpaper: VS Code's colors from the wallpaper's palette. |
+| `dokiCarousel.paletteSource` | `wallpaper` | Which image gives its palette to Theme from wallpaper: `wallpaper` or `background`. |
+| `dokiCarousel.wallpaperOpacity` | `100` | Opacity (0–100 %) of Doki's wallpaper over black, changed live. |
+| `dokiCarousel.backgroundOpacity` | `100` | Opacity (0–100 %) of Doki's background (empty editor) over black, changed live. |
 | `dokiCarousel.quickInputTint` | `65` | Darkness (0–100 %) behind the command palette. |
 | `dokiCarousel.brightenThumbnails` | `true` | Brighten the hover previews of dimmed wallpapers so they are easy to recognize. Only the previews change. |
 | `dokiCarousel.showEditorTitleArrows` | `true` | Show ◀ ▶ in the editor title bar. |
@@ -232,6 +247,9 @@ Transparency is done with regular VS Code settings:
 | `workbench.colorCustomizations` → `sideBar.background`, `sideBarSectionHeader.background`, `panel.background` | `#00000000` | Shows the wallpaper behind the side bars and panel. |
 | `workbench.colorCustomizations` → `terminal.background` | `#00000000`, or the theme's own background color when *Wallpaper in terminal* is off | Shows the wallpaper behind the terminal, or covers it. Themes rarely set a terminal color, and VS Code then uses the panel's, which is transparent while the panel shows the wallpaper. A terminal color you set yourself is kept. |
 | `workbench.colorCustomizations` → `quickInput.background` | black at the chosen tint | Command palette tint. |
+| `workbench.colorCustomizations` → 78 theme colors (`focusBorder`, `button.background`, `statusBar.background`, …) | from the wallpaper's palette | Only with **Theme from wallpaper** on. The colors you had set yourself when you turned it on are kept; the others are removed when it is turned off or no wallpaper is set. |
+| `workbench.colorTheme` | VS Code's own dark theme | Only when you turn **Theme from wallpaper** on, after asking. Not changed back when it is turned off. |
+| `workbench.colorCustomizations` → `dokiCarousel.wallpaperDim`, `dokiCarousel.backgroundDim` | black at 100 % minus the chosen opacity | The **Opacity** slider, for the wallpaper and the background (each only below 100 %, and while Doki's switch for that image is on). |
 | `terminal.integrated.gpuAcceleration` | `off` | Doki's wallpaper covers the text drawn by the GPU terminal renderer; the standard renderer keeps it visible. |
 | `window.newWindowDimensions` | `maximized` (for a moment) | Opens the refreshed window maximized, then restores your value. |
 
@@ -239,29 +257,35 @@ When a value is no longer needed, the extension removes it, and only values it a
 
 ### The one file it changes
 
-Doki draws the wallpaper right on the editor and terminal elements, so no color setting can hide it there. Only when you turn off **Wallpaper in editors** or **Wallpaper in terminal**, the extension adds a small, clearly marked block of CSS (`/* Wallpaper Carousel for Doki Theme: start */ … end */`) to the same VS Code stylesheet Doki writes the wallpaper into, placed where Doki keeps it when it installs a new wallpaper. Like Doki, it updates the file's checksum in VS Code's `product.json` (after saving a copy of the original as `product.json.orig.<version>`, unless Doki already did).
+Doki draws the wallpaper right on the editor and terminal elements, so no color setting can dim or hide it there. So the extension adds a small, clearly marked block of CSS (`/* Wallpaper Carousel for Doki Theme: start */ … end */`) to the same VS Code stylesheet Doki writes the wallpaper into, placed where Doki keeps it when it installs a new wallpaper. The block puts the black layer of the **Opacity** slider over the wallpaper; its colors come from `workbench.colorCustomizations` → `dokiCarousel.wallpaperDim` and `dokiCarousel.backgroundDim`, which is why the slider works without reopening the window. When you turn off **Wallpaper in editors** or **Wallpaper in terminal**, the block also hides the wallpaper there. Like Doki, it updates the file's checksum in VS Code's `product.json` (after saving a copy of the original as `product.json.orig.<version>`, unless Doki already did).
 
-The block is removed as soon as both options are on again, and when the extension is uninstalled. A VS Code update replaces the stylesheet; the extension then adds the block back and offers to reopen the window.
+The block is removed when the extension is uninstalled. A VS Code update replaces the stylesheet; the extension then adds the block back and offers to reopen the window.
 
 ## Troubleshooting
 
 **"Doki did not update the CSS yet"**: make sure a Doki theme is active and `doki.wallpaper.enabled` is `true`. Doki may check its online assets before installing, which can take a few seconds on a slow network.
 
+**Doki opens its "Asset Installation Help" page asking for write access or to run as administrator**: Doki shows that page whenever installing an image fails, for any reason. If it happens with a big wallpaper set outside this extension (in Doki's settings, for example), the real reason is its size: see [how large a wallpaper can be](#-how-large-a-wallpaper-can-be). *Help > Toggle Developer Tools* then shows `Unable to install sticker! RangeError: Invalid string length`. The extension checks the size before handing a file to Doki, so this doesn't happen when you apply wallpapers from the carousel.
+
 **The wallpaper did not change after switching**: restart VS Code. If you applied it as *Background*, close all editors: the background only shows while no file is open.
 
-**A wallpaper changed outside the extension still looks the same**: Doki keeps showing the version it installed. Click the wallpaper in the list to install it again. (Files changed with *Set opacity*, *Reset opacity* or *GIF optimization* are reloaded automatically.)
+**A wallpaper changed outside the extension still looks the same**: Doki keeps showing the version it installed. Click the wallpaper in the list to install it again. (Files replaced by *GIF optimization* are reloaded automatically.)
 
-**VS Code says the installation is "[Unsupported]" or corrupt**: that message comes from VS Code's stylesheet being changed, by Doki when it installs a wallpaper and by this extension when *Wallpaper in editors* or *Wallpaper in terminal* is off. Both fix the checksum right away, but VS Code keeps comparing against the one it read when it started, so the notice can show up until VS Code is fully restarted. It is harmless; choose *Don't Show Again* to hide it. See the Doki Theme documentation.
+**VS Code says the installation is "[Unsupported]" or corrupt**: that message comes from VS Code's stylesheet being changed, by Doki when it installs a wallpaper and by this extension's CSS block (see [the one file it changes](#the-one-file-it-changes)). Both fix the checksum right away, but VS Code keeps comparing against the one it read when it started, so the notice can show up until VS Code is fully restarted. It is harmless; choose *Don't Show Again* to hide it. See the Doki Theme documentation.
 
 **Terminal text is invisible**: keep `dokiCarousel.fixTerminalText` enabled, then open a new terminal.
 
-**No hover previews / conversion, Set opacity or GIF optimization fails**: check that `ffmpeg -version` and `ffprobe -version` work in a new terminal, or point `dokiCarousel.ffmpegPath` at the folder that contains them. The **Wallpaper Carousel** output channel shows ffmpeg's messages.
+**No hover previews or loops / conversion or GIF optimization fails**: check that `ffmpeg -version` and `ffprobe -version` work in a new terminal, or point `dokiCarousel.ffmpegPath` at the folder that contains them. The **Wallpaper Carousel** output channel shows ffmpeg's messages.
 
-**Removing everything**: uninstalling takes the extension's CSS block out of VS Code's stylesheet (the next time VS Code starts), but leaves the settings listed above. Before uninstalling, untick *Wallpaper in side bars & panel* in the panel's **Appearance** section so the extension removes those colors. Then delete `terminal.background` and `quickInput.background` from `workbench.colorCustomizations`, and `terminal.integrated.gpuAcceleration` if you want the GPU terminal back. Click the **✕** on the preview if you also want the wallpaper gone (Doki's *Remove Sticker/Background* removes it together with the stickers).
+**The Opacity slider does nothing**: the window has to reopen once to load the CSS it needs. Accept the *Reopen* notification that shows a few seconds after the extension is installed or updated, or after a VS Code update.
+
+**Theme from wallpaper shows no colors**: it needs a wallpaper (or, with `dokiCarousel.paletteSource` set to `background`, a background) applied and ffmpeg installed. A Doki theme picked afterwards mixes its colors with the palette: turn the option off to use the Doki theme alone.
+
+**Removing everything**: when you uninstall the extension, it takes out the colors it added to `workbench.colorCustomizations` (yours stay) and asks whether to **uninstall Doki Theme too**: Doki came along as a dependency, but it also gives VS Code its themes and stickers, so the choice is yours. The extension's CSS block leaves VS Code's stylesheet the next time VS Code starts. Delete `terminal.integrated.gpuAcceleration` from your settings if you want the GPU terminal back. Click the **✕** on the preview first if you want the wallpaper gone but keep Doki (Doki's *Remove Sticker/Background* removes it together with the stickers).
 
 ## Privacy
 
-The extension makes no network requests and collects no data. Hover previews are stored in the extension's private storage folder on your machine.
+The extension makes no network requests and collects no data. Hover previews and wallpaper palettes are stored in the extension's private storage on your machine.
 
 ## Credits
 

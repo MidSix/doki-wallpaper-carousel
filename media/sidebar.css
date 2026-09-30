@@ -21,6 +21,8 @@ input.picked { cursor: pointer; text-overflow: ellipsis; }
 
 label { display: block; margin: 6px 0; }
 label.check { display: flex; align-items: center; gap: 6px; }
+label.check.disabled { opacity: .5; cursor: not-allowed; }
+label.check.disabled input { cursor: not-allowed; }
 
 input[type="text"], input[type="number"], input[type="search"], select {
   width: 100%;
@@ -64,14 +66,22 @@ button.wide { width: 100%; margin: 6px 0; }
   border-radius: 4px;
 }
 .preview img { width: 100%; height: 100%; object-fit: cover; }
-.preview-remove {
-  position: absolute; top: 5px; right: 5px;
+/* Round buttons over the preview: ✕ in the top right, w and b in the top left */
+.preview-btn {
   width: 22px; height: 22px; padding: 0; border-radius: 50%;
   font-size: 11px; line-height: 22px; text-align: center;
   color: #fff; background: rgba(0, 0, 0, .55);
 }
-.preview-remove:hover { background: rgba(0, 0, 0, .8); }
+.preview-btn:hover { background: rgba(0, 0, 0, .8); }
+.preview-remove { position: absolute; top: 5px; right: 5px; }
 .preview-remove:disabled, .preview-remove:disabled:hover { opacity: .35; cursor: not-allowed; background: rgba(0, 0, 0, .55); }
+.preview-targets { position: absolute; top: 5px; left: 5px; display: flex; gap: 5px; }
+.preview-targets .preview-btn { font-weight: 600; text-shadow: 0 0 2px rgba(0, 0, 0, .8); }
+/* That image of Doki's shows a file */
+.preview-targets .preview-btn.set { background: rgba(230, 180, 20, .6); }
+.preview-targets .preview-btn.set:hover { background: rgba(230, 180, 20, .85); }
+/* The carousel applies to that image ("Apply as"); Both rings both */
+.preview-targets .preview-btn.selected { box-shadow: 0 0 0 2px rgba(210, 210, 210, .9), 0 0 0 3px rgba(0, 0, 0, .35); }
 
 .nav { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 8px 0 4px; }
 .nav button { min-width: 36px; }
@@ -85,6 +95,9 @@ button.wide { width: 100%; margin: 6px 0; }
   background: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground);
 }
+/* Too large for VS Code (see imageRoom in doki.ts); the arrows skip them */
+#list li.too-large { opacity: .6; }
+#list li.too-large::before { content: "⚠ "; color: var(--vscode-editorWarning-foreground); }
 
 /* While a wallpaper is being applied, or a copy / conversion runs */
 body.busy #list li { cursor: progress; opacity: .55; }
@@ -98,6 +111,21 @@ button:disabled { opacity: .5; cursor: progress; }
   background: var(--vscode-inputValidation-warningBackground, transparent);
 }
 .task-note[hidden] { display: none; }
+
+/* Loops of the GIF picked in GIF optimization */
+.loops { margin: 8px 0; }
+.loops[hidden] { display: none; }
+.loop-track {
+  position: relative; height: 6px; margin: 12px 5px 8px; border-radius: 3px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, .35));
+}
+.loop-range { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--vscode-button-background); opacity: .5; }
+button.loop-dot {
+  position: absolute; top: 50%; width: 11px; height: 11px; min-width: 0; margin: -6px 0 0 -6px; padding: 0;
+  border-radius: 50%; border: 1px solid rgba(0, 0, 0, .5); background: #f5c518; cursor: pointer;
+}
+button.loop-dot:hover { background: #ffdd55; transform: scale(1.3); }
 
 .range-hints { display: flex; justify-content: space-between; font-size: 0.85em; margin-top: -4px; }
 .hint { font-size: 0.85em; margin: -2px 0 6px; }

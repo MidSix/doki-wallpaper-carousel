@@ -8,9 +8,6 @@ import * as path from "path";
  */
 export const WALLPAPER_EXTENSIONS = [".gif", ".png", ".apng", ".jpg", ".jpeg", ".jfif", ".webp", ".avif", ".bmp", ".ico"];
 
-/** For file dialog filters: extensions without the dot. */
-export const WALLPAPER_FILTER = WALLPAPER_EXTENSIONS.map((e) => e.slice(1));
-
 export const isWallpaper = (file: string) => WALLPAPER_EXTENSIONS.includes(path.extname(file).toLowerCase());
 
 function readHead(file: string, bytes: number): Buffer {
@@ -49,50 +46,4 @@ export function isAnimated(file: string): boolean {
     return ascii.slice(8, size).includes("avis");
   }
   return false;
-}
-
-export type OpacityPlan =
-  /** Two passes (palette, then GIF), each taking the filter graph with a palette input. */
-  | { kind: "gif" }
-  /** One pass: output options after `-i file -vf <filter>`. */
-  | { kind: "single"; output: string[] }
-  | { kind: "unsupported"; reason: string };
-
-/**
- * How ffmpeg rewrites a wallpaper with a color filter while keeping its format, size, frame
- * timing and transparency. `sequenceStream` is the stream index of an animated AVIF's frames.
- */
-export function opacityPlan(file: string, sequenceStream?: number): OpacityPlan {
-  const ext = path.extname(file).toLowerCase();
-  const animated = isAnimated(file);
-  const still = ["-frames:v", "1", "-update", "1"];
-  switch (ext) {
-    case ".gif":
-      return { kind: "gif" };
-    case ".png":
-    case ".apng":
-      return animated
-        ? { kind: "single", output: ["-c:v", "apng", "-plays", "0", "-f", "apng"] }
-        : { kind: "single", output: [...still, "-c:v", "png", "-f", "image2"] };
-    case ".jpg":
-    case ".jpeg":
-    case ".jfif":
-      return { kind: "single", output: [...still, "-c:v", "mjpeg", "-q:v", "2", "-f", "image2"] };
-    case ".webp":
-      // ffmpeg reads the first frame of an animated WebP only, or nothing at all.
-      if (animated) return { kind: "unsupported", reason: "ffmpeg can't read animated WebP files" };
-      return { kind: "single", output: [...still, "-c:v", "libwebp", "-quality", "92", "-f", "webp"] };
-    case ".avif": {
-      const av1 = ["-c:v", "libaom-av1", "-crf", "20", "-cpu-used", "6", "-pix_fmt", "yuv420p", "-f", "avif"];
-      if (!animated) return { kind: "single", output: [...still, "-still-picture", "1", ...av1] };
-      // An animated AVIF also has a still cover image; the frames are in their own stream.
-      return { kind: "single", output: [...(sequenceStream !== undefined ? ["-map", `0:${sequenceStream}`] : []), ...av1] };
-    }
-    case ".bmp":
-      return { kind: "single", output: [...still, "-c:v", "bmp", "-f", "image2"] };
-    case ".ico":
-      return { kind: "single", output: [...still, "-f", "ico"] };
-    default:
-      return { kind: "unsupported", reason: `${ext || "this file type"} is not a wallpaper format` };
-  }
 }

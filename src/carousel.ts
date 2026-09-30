@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import { applyWallpaper, getCurrentDokiPath } from "./doki";
+import { ImageRoom, applyWallpaper, formatSize, getCurrentDokiPath, imageRoom, tooLargeReason } from "./doki";
 import { WALLPAPER_EXTENSIONS } from "./formats";
 import { samePath } from "./platform";
 
@@ -121,8 +121,13 @@ export class Carousel {
       return;
     }
     const index = this.currentIndex();
+    const n = files.length;
     // Not in the list yet: "next" starts at the first file, "previous" at the last one.
-    const next = index === -1 ? (delta > 0 ? 0 : files.length - 1) : (index + delta + files.length) % files.length;
+    const order = files.map((_, i) => (index === -1 ? (delta > 0 ? i : n - 1 - i) : (((index + delta * (i + 1)) % n) + n) % n));
+    // Files VS Code can't load are skipped; the list marks them.
+    const room = imageRoom();
+    const next = order.find((i) => !tooLargeReason(files[i].size, room));
+    if (next === undefined) return this.reportNoneFits(room);
     await applyWallpaper(files[next].path);
   }
 
@@ -130,8 +135,16 @@ export class Carousel {
     const files = this.files();
     if (files.length === 0) return this.step(1);
     const index = this.currentIndex();
-    let next = Math.floor(Math.random() * files.length);
-    if (files.length > 1 && next === index) next = (next + 1) % files.length;
-    await applyWallpaper(files[next].path);
+    const room = imageRoom();
+    const fitting = files.map((_, i) => i).filter((i) => !tooLargeReason(files[i].size, room));
+    if (!fitting.length) return this.reportNoneFits(room);
+    const others = fitting.filter((i) => i !== index);
+    const pool = others.length ? others : fitting;
+    await applyWallpaper(files[pool[Math.floor(Math.random() * pool.length)]].path);
+  }
+
+  private reportNoneFits(room: ImageRoom) {
+    const why = room.other ? `, since ${room.other} is installed too` : "";
+    vscode.window.showWarningMessage(`No wallpaper in the folder is small enough: the largest VS Code can load now is ${formatSize(room.now)}${why}. Make them lighter with GIF optimization.`);
   }
 }

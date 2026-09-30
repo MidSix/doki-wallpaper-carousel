@@ -1,20 +1,19 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import { execFile, spawn } from "child_process";
+import { spawn } from "child_process";
 import * as crypto from "crypto";
 import * as os from "os";
 import { findTool, isWindows, powershellExecutable, samePath, warnFfmpegMissing } from "./platform";
 import { applyWallpaper, beginTask, getCurrentDokiPath } from "./doki";
-import { OpacityPlan, isAnimated, opacityPlan } from "./formats";
 
 let output: vscode.OutputChannel | undefined;
-let store: vscode.Memento | undefined;
 
-/** Remembers the opacity Set opacity gave each file, so it can be reset. */
+// Kept by the Set opacity tool of earlier versions, replaced by the live opacity slider.
+const OLD_KEYS = ["dokiCarousel.opacityRecords", "dokiCarousel.dimmedCopies", "dokiCarousel.dimOptions", "dokiCarousel.dimFiles"];
+
 export function initTools(context: vscode.ExtensionContext) {
-  store = context.globalState;
-  if (store.get(OLD_DIMMED_KEY) !== undefined) store.update(OLD_DIMMED_KEY, undefined);
+  for (const key of OLD_KEYS) if (context.globalState.get(key) !== undefined) context.globalState.update(key, undefined);
 }
 
 function log(line: string) {
@@ -205,7 +204,6 @@ export interface ConvertOptions {
   fps: number;
   width: number;
   height: number;
-  opacity: number;
   startSeconds: number;
   durationSeconds: number;
   /** Empty = next to each .mp4 */
@@ -216,7 +214,6 @@ export const defaultConvertOptions: ConvertOptions = {
   fps: 12,
   width: 480,
   height: -1,
-  opacity: 100,
   startSeconds: 0,
   durationSeconds: 0,
   destination: "",
@@ -252,7 +249,6 @@ function sanitize(opts: ConvertOptions) {
     fps: Math.max(1, Math.round(num(opts.fps, 12))),
     width: Math.round(num(opts.width, 480)),
     height: Math.round(num(opts.height, -1)),
-    opacity: Math.min(100, Math.max(0, num(opts.opacity, 100))),
     startSeconds: Math.max(0, num(opts.startSeconds, 0)),
     durationSeconds: Math.max(0, num(opts.durationSeconds, 0)),
   };
@@ -264,15 +260,8 @@ async function convertOne(ffmpeg: string, file: string, outPath: string, opts: C
   const trim: string[] = [];
   if (o.startSeconds > 0) trim.push("-ss", String(o.startSeconds));
   if (o.durationSeconds > 0) trim.push("-t", String(o.durationSeconds));
-  let filters = `fps=${o.fps},scale=${o.width}:${o.height}:flags=lanczos`;
-  if (o.opacity < 100) {
-    // A GIF has no real alpha: fake opacity by covering the video with black at
-    // (100 - opacity)%, so opacity 25 leaves the video at 25% brightness. Always black: that is a
-    // plain multiplication of every pixel, which the hover previews can undo (thumbnails.ts).
-    // drawbox works on every ffmpeg version, unlike scale2ref's ref_w/ref_h (ffmpeg 7+ only).
-    const cover = ((100 - o.opacity) / 100).toFixed(3);
-    filters += `,drawbox=x=0:y=0:w=iw:h=ih:color=black@${cover}:t=fill`;
-  }
+  // No darkening here: the wallpaper's opacity is set live in VS Code (the panel's Opacity slider).
+  const filters = `fps=${o.fps},scale=${o.width}:${o.height}:flags=lanczos`;
   const quiet = ["-loglevel", "error"];
 
   try {
@@ -294,7 +283,8 @@ function runCustomScript(script: string, file: string, opts: ConvertOptions, tok
     "-Fps", String(opts.fps),
     "-Width", String(opts.width),
     "-Height", String(opts.height),
-    "-Opacity", String(opts.opacity),
+    // Full opacity: the panel's Opacity slider darkens wallpapers live instead.
+    "-Opacity", "100",
     "-BackgroundColor", "black",
     "-StartSeconds", String(opts.startSeconds),
     "-DurationSeconds", String(opts.durationSeconds),
@@ -428,135 +418,6 @@ export async function convertMp4(files: string[], opts: ConvertOptions): Promise
   return created;
 }
 
-// ---------------------------------------------------------------- opacity records
-
-export interface DimOptions {
-  /** 5–100: how visible the wallpaper stays over black */
-  opacity: number;
-  /** Empty = each file's own folder, replacing it */
-  destination: string;
-}
-
-export const defaultDimOptions: DimOptions = {
-  opacity: 40,
-  destination: "",
-};
-
-/** At 0 % a file would turn black for good, with nothing left to brighten back. */
-export function dimOpacity(opts: DimOptions): number {
-  return Math.min(100, Math.max(5, Math.round(num(opts.opacity, defaultDimOptions.opacity))));
-}
-
-const OPACITY_KEY = "dokiCarousel.opacityRecords";
-// Records of the copies written by earlier development versions, no longer used.
-const OLD_DIMMED_KEY = "dokiCarousel.dimmedCopies";
-
-/** What Set opacity did to a file, and the file as it left it (to notice later changes). */
-interface OpacityRecord {
-  /** Total opacity, 0–100: setting 50 % twice gives 25 %. */
-  opacity: number;
-  size: number;
-  mtime: number;
-}
-
-function opacityRecords(): Record<string, OpacityRecord> {
-  return store?.get<Record<string, OpacityRecord>>(OPACITY_KEY, {}) ?? {};
-}
-
-function findRecordKey(records: Record<string, OpacityRecord>, file: string): string | undefined {
-  return Object.keys(records).find((key) => samePath(key, file));
-}
-
-/** The record of this file, as long as it is still the file Set opacity wrote. */
-function opacityRecord(file: string): OpacityRecord | undefined {
-  const records = opacityRecords();
-  const key = findRecordKey(records, file);
-  if (!key) return undefined;
-  try {
-    const stat = fs.statSync(file);
-    if (stat.size === records[key].size && Math.round(stat.mtimeMs) === records[key].mtime) return records[key];
-  } catch {
-    // Gone.
-  }
-  return undefined;
-}
-
-/** Remember the total opacity of a file just written, or forget it (undefined). */
-async function saveOpacityRecord(file: string, opacity: number | undefined) {
-  const records = opacityRecords();
-  const key = findRecordKey(records, file);
-  if (key) delete records[key];
-  if (opacity !== undefined && opacity < 100) {
-    const stat = fs.statSync(file);
-    records[path.resolve(file)] = { opacity, size: stat.size, mtime: Math.round(stat.mtimeMs) };
-  }
-  await store?.update(OPACITY_KEY, records);
-}
-
-function probe(ffprobe: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(ffprobe, args, { windowsHide: true, timeout: 60000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
-  });
-}
-
-/** How ffmpeg rewrites this file (see formats.ts); an animated AVIF needs its stream of frames. */
-async function planFor(file: string): Promise<OpacityPlan> {
-  let sequence: number | undefined;
-  const ffprobe = findTool("ffprobe");
-  if (path.extname(file).toLowerCase() === ".avif" && isAnimated(file) && ffprobe) {
-    try {
-      // An animated AVIF also holds a still cover image: take the stream with the most frames.
-      const streams = (await probe(ffprobe, ["-v", "error", "-show_entries", "stream=index,nb_frames", "-of", "csv=p=0", file]))
-        .trim()
-        .split(/\r?\n/)
-        .map((line) => line.split(",").map(Number));
-      sequence = streams.reduce((best, s) => ((s[1] || 0) > (best[1] || 0) ? s : best))[0];
-    } catch {
-      // Then ffmpeg picks the stream, which gives a still image.
-    }
-  }
-  return opacityPlan(file, sequence);
-}
-
-/** Run a color filter over a wallpaper, keeping its format, size, frame timing and transparency. */
-async function filterWallpaper(ffmpeg: string, file: string, plan: OpacityPlan, outPath: string, filter: string, token: vscode.CancellationToken): Promise<boolean> {
-  const quiet = ["-loglevel", "error"];
-  if (plan.kind === "single") return runFfmpeg(ffmpeg, ["-y", "-i", file, "-vf", filter, ...plan.output, ...quiet, outPath], token);
-  if (plan.kind !== "gif") return false;
-  // A GIF has at most 256 colors: a new palette for the new colors, then the GIF using it.
-  const palette = path.join(os.tmpdir(), `doki-carousel-palette-${crypto.randomUUID()}.png`);
-  try {
-    const paletteArgs = ["-y", "-i", file, "-vf", `${filter},palettegen=stats_mode=diff`, ...quiet, palette];
-    if (!(await runFfmpeg(ffmpeg, paletteArgs, token))) return false;
-    const gifArgs = ["-y", "-i", file, "-i", palette, "-lavfi", `${filter} [x]; [x][1:v] paletteuse=dither=sierra2_4a`, ...quiet, outPath];
-    return await runFfmpeg(ffmpeg, gifArgs, token);
-  } finally {
-    fs.promises.unlink(palette).catch(() => undefined);
-  }
-}
-
-/**
- * Same "video opacity" as the .mp4 conversion, applied to an existing wallpaper: every pixel is
- * multiplied by opacity / 100, i.e. blended with black, so the hover previews can undo it too
- * (thumbnails.ts). Unlike drawbox, colorchannelmixer leaves the alpha channel alone, so
- * transparent pixels stay transparent. Without an fps filter ffmpeg keeps each frame's delay.
- */
-function dimFilter(opacity: number): string {
-  const f = (opacity / 100).toFixed(3);
-  return `colorchannelmixer=rr=${f}:gg=${f}:bb=${f}`;
-}
-
-/**
- * Undo the darkening by dividing every pixel by the opacity. Only approximate: the darker
- * file has fewer color levels (at 25 % only a quarter are left) and was compressed again, so
- * fine gradients come back with some banding. lutrgb because colorchannelmixer can't go above
- * 2x; it leaves the alpha channel alone as well.
- */
-function brightenFilter(opacity: number): string {
-  const g = (100 / opacity).toFixed(3);
-  return `lutrgb=r=clipval*${g}:g=clipval*${g}:b=clipval*${g}`;
-}
-
 // ---------------------------------------------------------------- shared steps of the file tools
 
 /** One file to process and where its result goes. */
@@ -665,75 +526,6 @@ async function reportAndReload(message: string, written: string[]) {
   if (action) output?.show(true);
 }
 
-// ---------------------------------------------------------------- set opacity
-
-/** Write a darker version of each wallpaper; into its own folder, that replaces it (after asking). */
-export async function dimWallpapers(files: string[], opts: DimOptions): Promise<string[]> {
-  const ffmpeg = findTool("ffmpeg");
-  if (!ffmpeg) {
-    warnFfmpegMissing();
-    return [];
-  }
-  const opacity = dimOpacity(opts);
-  if (opacity >= 100) {
-    vscode.window.showWarningMessage("At 100% opacity the wallpapers would stay as they are. Move the slider down to darken them.");
-    return [];
-  }
-  const jobs = jobsFor(files, opts.destination);
-  if (!(await confirmOverwrite("Set opacity", jobs, `The new version is at ${opacity}% opacity (over black). Reset opacity can brighten it back, but only approximately.`))) return [];
-  if (opts.destination) fs.mkdirSync(opts.destination, { recursive: true });
-
-  return runFileTool("Setting opacity", `Set opacity to ${opacity}%`, jobs, async ({ file, out }, token) => {
-    const plan = await planFor(file);
-    if (plan.kind === "unsupported") return { skipped: plan.reason };
-    // Read before anything changes: a file darkened again gets darker still (50 % of 50 % = 25 %).
-    const before = opacityRecord(file)?.opacity ?? 100;
-    if (!(await renderViaTemp(out, (temp) => filterWallpaper(ffmpeg, file, plan, temp, dimFilter(opacity), token)))) return "failed";
-    await saveOpacityRecord(out, (before * opacity) / 100);
-    return "done";
-  });
-}
-
-// ---------------------------------------------------------------- reset opacity
-
-/**
- * Undo "Set opacity" by brightening each file back, in place. Only approximate: see
- * brightenFilter(). Files not written by Set opacity, or edited since, are left alone.
- */
-export async function resetDimming(files: string[]): Promise<void> {
-  const known = files.filter((file) => opacityRecord(file));
-  const unknown = files.length - known.length;
-  if (!known.length) {
-    vscode.window.showInformationMessage(
-      "None of these files were changed with Set opacity (or they were edited since), so there is nothing to reset. For a GIF converted from a video, convert the .mp4 again at 100% opacity."
-    );
-    return;
-  }
-  const ffmpeg = findTool("ffmpeg");
-  if (!ffmpeg) {
-    warnFfmpegMissing();
-    return;
-  }
-
-  const what = known.length === 1 ? path.basename(known[0]) : `${known.length} wallpapers`;
-  const detail = [
-    "Each file is replaced by a brighter version that undoes Set opacity. The result is close to the original but not identical: some detail was lost when it was darkened.",
-  ];
-  if (unknown) detail.push(`${unknown} other file(s) will be left alone: not changed with Set opacity, or edited since.`);
-  const confirm = await vscode.window.showWarningMessage(`Brighten ${what} back?`, { modal: true, detail: detail.join("\n\n") }, "Reset");
-  if (confirm !== "Reset") return;
-
-  await runFileTool("Resetting opacity", "Reset opacity", jobsFor(known, ""), async ({ file }, token) => {
-    const record = opacityRecord(file);
-    if (!record) return { skipped: "edited since it was darkened" };
-    const plan = await planFor(file);
-    if (plan.kind === "unsupported") return { skipped: plan.reason };
-    if (!(await renderViaTemp(file, (temp) => filterWallpaper(ffmpeg, file, plan, temp, brightenFilter(record.opacity), token)))) return "failed";
-    await saveOpacityRecord(file, undefined);
-    return "done";
-  });
-}
-
 // ---------------------------------------------------------------- gif optimization
 
 export interface OptimizeOptions {
@@ -759,29 +551,37 @@ export const defaultOptimizeOptions: OptimizeOptions = {
   destination: "",
 };
 
-/** The ffmpeg filters and trim options for these settings; empty when they change nothing. */
-function optimization(opts: OptimizeOptions): { filters: string; trim: string[] } {
+/** The ffmpeg filters for these settings; empty when they change nothing. */
+function optimization(opts: OptimizeOptions): string {
   const fps = Math.max(0, Math.round(num(opts.fps, 0)));
   const width = Math.max(0, Math.round(num(opts.width, 0)));
   const height = Math.round(num(opts.height, -1));
   const start = Math.max(0, num(opts.startSeconds, 0));
   const duration = Math.max(0, num(opts.durationSeconds, 0));
   const filters: string[] = [];
+  // Trimmed in the filter graph, exact to the frame. Output -ss/-t would also drop the palette,
+  // which palettegen emits as one frame at the end, and the second pass would find no palette.
+  if (start > 0 || duration > 0) {
+    filters.push(`trim=${[...(start > 0 ? [`start=${start}`] : []), ...(duration > 0 ? [`duration=${duration}`] : [])].join(":")}`, "setpts=PTS-STARTPTS");
+  }
   if (fps > 0) filters.push(`fps=${fps}`);
   if (width > 0 || height > 0) filters.push(`scale=${width > 0 ? width : -1}:${height > 0 ? height : -1}:flags=lanczos`);
-  // Output options, after the input: exact to the frame, unlike seeking in the GIF itself.
-  const trim = [...(start > 0 ? ["-ss", String(start)] : []), ...(duration > 0 ? ["-t", String(duration)] : [])];
-  return { filters: filters.join(","), trim };
+  return filters.join(",");
 }
 
 /** Same two-pass palette as the .mp4 conversion, so the smaller GIF keeps its colors. */
-async function optimizeOne(ffmpeg: string, file: string, outPath: string, filters: string, trim: string[], token: vscode.CancellationToken): Promise<boolean> {
+async function optimizeOne(ffmpeg: string, file: string, outPath: string, filters: string, token: vscode.CancellationToken): Promise<boolean> {
   const palette = path.join(os.tmpdir(), `doki-carousel-palette-${crypto.randomUUID()}.png`);
   const quiet = ["-loglevel", "error"];
   try {
-    const paletteArgs = ["-y", "-i", file, ...trim, "-vf", `${filters ? `${filters},` : ""}palettegen=stats_mode=diff`, ...quiet, palette];
+    const paletteArgs = ["-y", "-i", file, "-vf", `${filters},palettegen=stats_mode=diff`, ...quiet, palette];
     if (!(await runFfmpeg(ffmpeg, paletteArgs, token))) return false;
-    const gifArgs = ["-y", "-i", file, "-i", palette, ...trim, "-lavfi", `${filters || "null"} [x]; [x][1:v] paletteuse=dither=sierra2_4a`, ...quiet, outPath];
+    // A fragment with no frames (Start past the end) leaves no palette.
+    if (!fs.existsSync(palette)) {
+      log("  no frames to keep: is Start past the end of the GIF?");
+      return false;
+    }
+    const gifArgs = ["-y", "-i", file, "-i", palette, "-lavfi", `${filters} [x]; [x][1:v] paletteuse=dither=sierra2_4a`, ...quiet, outPath];
     return await runFfmpeg(ffmpeg, gifArgs, token);
   } finally {
     fs.promises.unlink(palette).catch(() => undefined);
@@ -795,8 +595,8 @@ export async function optimizeGifs(files: string[], opts: OptimizeOptions): Prom
     warnFfmpegMissing();
     return [];
   }
-  const { filters, trim } = optimization(opts);
-  if (!filters && !trim.length) {
+  const filters = optimization(opts);
+  if (!filters) {
     vscode.window.showWarningMessage("These options keep the GIFs as they are. Set a lower FPS, a new size or a fragment to keep first.");
     return [];
   }
@@ -806,10 +606,6 @@ export async function optimizeGifs(files: string[], opts: OptimizeOptions): Prom
 
   return runFileTool("Optimizing GIFs", "GIF optimization", jobs, async ({ file, out }, token) => {
     if (path.extname(file).toLowerCase() !== ".gif") return { skipped: "not a GIF" };
-    const darkened = opacityRecord(file);
-    if (!(await renderViaTemp(out, (temp) => optimizeOne(ffmpeg, file, temp, filters, trim, token)))) return "failed";
-    // Still as dark as before: Reset opacity must keep working on the new file.
-    if (darkened) await saveOpacityRecord(out, darkened.opacity);
-    return "done";
+    return (await renderViaTemp(out, (temp) => optimizeOne(ffmpeg, file, temp, filters, token))) ? "done" : "failed";
   });
 }

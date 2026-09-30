@@ -1,8 +1,8 @@
 {
   "name": "doki-wallpaper-carousel",
   "displayName": "Wallpaper Carousel for Doki Theme",
-  "description": "Unofficial companion for the Doki Theme: flip your wallpaper through a folder of GIFs and images (PNG, JPG, WebP, AVIF, ...), choose where it shows (editors, side bars, panel, terminal), turn .mp4 videos into GIF wallpapers and darken wallpapers so code stays readable over them.",
-  "version": "1.1.0",
+  "description": "Unofficial companion for the Doki Theme: flip your wallpaper through a folder of GIFs and images (PNG, JPG, WebP, AVIF, ...), choose where it shows (editors, side bars, panel, terminal), darken it live so code stays readable, color VS Code after it, make big GIFs lighter and turn .mp4 videos into GIF wallpapers.",
+  "version": "1.2.0",
   "publisher": "MidSix",
   "author": {
     "name": "Sebastián David Moreno Expósito"
@@ -34,7 +34,9 @@
     "carousel",
     "anime",
     "slideshow",
-    "terminal"
+    "terminal",
+    "opacity",
+    "palette"
   ],
   "engines": {
     "vscode": "^1.85.0"
@@ -96,18 +98,8 @@
         "category": "Wallpaper Carousel"
       },
       {
-        "command": "dokiCarousel.setOpacity",
-        "title": "Set Wallpaper Opacity...",
-        "category": "Wallpaper Carousel"
-      },
-      {
         "command": "dokiCarousel.optimizeGifs",
         "title": "Optimize GIFs...",
-        "category": "Wallpaper Carousel"
-      },
-      {
-        "command": "dokiCarousel.resetOpacity",
-        "title": "Reset Wallpaper Opacity...",
         "category": "Wallpaper Carousel"
       }
     ],
@@ -177,6 +169,38 @@
           "type": "string",
           "default": "",
           "description": "Folder containing the wallpapers (GIFs and images) to cycle through."
+        },
+        "dokiCarousel.wallpaperOpacity": {
+          "type": "number",
+          "default": 100,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Opacity (%) of Doki's wallpaper over black: lower = darker, 100 = as the file is. Changes right away, without reopening the window, and never changes the files. Also adjustable with the Opacity slider in the Wallpaper Carousel panel, with w selected."
+        },
+        "dokiCarousel.wallpaperTheme": {
+          "type": "boolean",
+          "default": false,
+          "description": "Color VS Code with the palette of the wallpaper (or the background, see dokiCarousel.paletteSource), following it each time it changes. Turning it on replaces the current theme with VS Code's own dark theme, so Doki's colors don't mix in. Also the 'Theme from wallpaper' box in the Wallpaper Carousel panel."
+        },
+        "dokiCarousel.paletteSource": {
+          "type": "string",
+          "enum": [
+            "wallpaper",
+            "background"
+          ],
+          "enumDescriptions": [
+            "The palette comes from Doki's wallpaper (doki.wallpaper.path)",
+            "The palette comes from Doki's background, the image of the empty editor (doki.background.path)"
+          ],
+          "default": "wallpaper",
+          "description": "Which of Doki's two images gives its colors to VS Code when dokiCarousel.wallpaperTheme is on."
+        },
+        "dokiCarousel.backgroundOpacity": {
+          "type": "number",
+          "default": 100,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Opacity (%) of Doki's background (the empty editor area) over black: lower = darker, 100 = as the file is. Changes right away. Also adjustable with the Opacity slider in the Wallpaper Carousel panel, with b selected."
         },
         "dokiCarousel.includeSubfolders": {
           "type": "boolean",
@@ -296,7 +320,29 @@
           "description": "Optional: your own .ps1 converter taking the parameters of mp4_to_gif.ps1 (-Path, -Fps, -Width, ...). Runs with powershell.exe on Windows and pwsh (PowerShell 7) on macOS/Linux. Empty = built-in ffmpeg converter."
         }
       }
-    }
+    },
+    "colors": [
+      {
+        "id": "dokiCarousel.wallpaperDim",
+        "description": "Black layer over Doki's wallpaper. Set by the panel's Opacity slider (dokiCarousel.wallpaperOpacity); there is no need to change it by hand.",
+        "defaults": {
+          "dark": "#00000000",
+          "light": "#00000000",
+          "highContrast": "#00000000",
+          "highContrastLight": "#00000000"
+        }
+      },
+      {
+        "id": "dokiCarousel.backgroundDim",
+        "description": "Black layer over Doki's background (the empty editor area). Set by the panel's Opacity slider (dokiCarousel.backgroundOpacity); there is no need to change it by hand.",
+        "defaults": {
+          "dark": "#00000000",
+          "light": "#00000000",
+          "highContrast": "#00000000",
+          "highContrastLight": "#00000000"
+        }
+      }
+    ]
   },
   "scripts": {
     "vscode:uninstall": "node ./out/uninstall",
